@@ -42,7 +42,7 @@ Pesan user: `;
 
 // Panggil Gemini lewat REST API langsung (lebih stabil)
 async function tanyaGemini(teks) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=${GEMINI_API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
   const body = {
     contents: [{ parts: [{ text: PROMPT_TEMPLATE + teks }] }],
     generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
