@@ -22,11 +22,16 @@ const PROMPT_TEMPLATE = `Kamu adalah AI parser transaksi keuangan. User mengirim
 
 Tugasmu: ekstrak informasi dan balas HANYA dengan JSON valid berikut (tanpa markdown, tanpa teks tambahan apapun):
 
-{"tipe":"pengeluaran"|"pemasukan","kategori":"string","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"1 emoji relevan","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
+{"tipe":"pengeluaran"|"pemasukan","kategori":"string","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"1 emoji relevan","dompet":"string","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
 
 Panduan kategori:
 - Pengeluaran: Makanan, Transport, Belanja, Kesehatan, Hiburan, Tagihan, Lainnya
 - Pemasukan: Gaji, Bisnis, Transfer, Investasi, Lainnya
+
+Panduan dompet:
+- Jika user menyebut "cash", "tunai", "dompet" → isi "Cash"
+- Jika user menyebut nama bank atau e-wallet (BCA, BSI, BRI, BNI, Mandiri, GoPay, OVO, Dana, ShopeePay, dll) → isi nama tersebut
+- Jika tidak disebutkan sama sekali → isi "Cash"
 
 Aturan jumlah:
 - rb / ribu = x1.000 (contoh: 25rb = 25000)
@@ -58,7 +63,7 @@ async function tanyaGemini(teks) {
 async function ambilSemuaData() {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:E`,
+    range: `${SHEET_NAME}!A:F`,
   });
   return res.data.values || [];
 }
@@ -66,8 +71,12 @@ async function ambilSemuaData() {
 function getTanggal() {
   return new Date().toLocaleString("id-ID", {
     timeZone: "Asia/Jakarta",
-    day: "2-digit", month: "2-digit", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -87,7 +96,7 @@ function formatRupiah(angka) {
 async function simpanKeSheets(data) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:E`,
+    range: `${SHEET_NAME}!A:F`,
     valueInputOption: "USER_ENTERED",
     requestBody: {
       values: [[
@@ -96,6 +105,7 @@ async function simpanKeSheets(data) {
         data.kategori,
         data.tipe.charAt(0).toUpperCase() + data.tipe.slice(1),
         data.jumlah,
+        data.dompet || "Cash",
       ]],
     },
   });
@@ -106,7 +116,8 @@ async function handleStart(chatId) {
     `Halo! 👋 Aku bot pencatat keuangan kamu.\n\n` +
     `📝 *Catat transaksi* — ketik bebas, contoh:\n` +
     `💸 makan siang 25rb\n` +
-    `💰 gaji masuk 3jt\n\n` +
+    `💸 bensin 50rb pakai BCA\n` +
+    `💰 gaji masuk 3jt ke BSI\n\n` +
     `📊 *Command tersedia:*\n` +
     `/saldo — cek saldo & ringkasan hari ini\n` +
     `/laporan — laporan lengkap bulan ini\n` +
@@ -121,19 +132,24 @@ async function handleSaldo(chatId) {
   const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
 
   let totalMasuk = 0, totalKeluar = 0;
-  const hariIni = new Date().toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" });
   let hariIniMasuk = 0, hariIniKeluar = 0;
+
+  const hariIniStr = new Date().toLocaleDateString("id-ID", {
+    timeZone: "Asia/Jakarta", day: "numeric", month: "long", year: "numeric"
+  });
 
   for (const r of data) {
     const jumlah = parseFloat(r[4]) || 0;
     const tipe = r[3];
-    const tanggalRow = r[0] ? r[0].split(" ")[0] : "";
+    // Format baru: "Selasa, 27 Mei 2026 15.30" — ambil bagian tanggal saja
+    const tanggalRow = r[0] ? r[0].replace(/^[^,]+,\s*/, "").split(" pukul")[0].trim() : "";
+
     if (tipe === "Pemasukan") {
       totalMasuk += jumlah;
-      if (tanggalRow === hariIni) hariIniMasuk += jumlah;
+      if (tanggalRow === hariIniStr) hariIniMasuk += jumlah;
     } else {
       totalKeluar += jumlah;
-      if (tanggalRow === hariIni) hariIniKeluar += jumlah;
+      if (tanggalRow === hariIniStr) hariIniKeluar += jumlah;
     }
   }
 
@@ -160,16 +176,12 @@ async function handleLaporan(chatId) {
   const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
 
   const sekarang = new Date();
-  const bulanIni = sekarang.getMonth();
-  const tahunIni = sekarang.getFullYear();
+  const bulanIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "long" });
+  const tahunIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
 
   const dataBulan = data.filter(r => {
     if (!r[0]) return false;
-    const parts = r[0].split(" ")[0].split("/");
-    if (parts.length < 3) return false;
-    const bln = parseInt(parts[1]) - 1;
-    const thn = parseInt(parts[2]);
-    return bln === bulanIni && thn === tahunIni;
+    return r[0].includes(bulanIni) && r[0].includes(tahunIni);
   });
 
   if (dataBulan.length === 0) {
@@ -177,26 +189,35 @@ async function handleLaporan(chatId) {
   }
 
   const kategoriKeluar = {};
+  const dompetSummary = {};
   let totalMasuk = 0, totalKeluar = 0;
 
   for (const r of dataBulan) {
     const jumlah = parseFloat(r[4]) || 0;
     const tipe = r[3];
     const kategori = r[2] || "Lainnya";
+    const dompet = r[5] || "Cash";
+
     if (tipe === "Pemasukan") {
       totalMasuk += jumlah;
     } else {
       totalKeluar += jumlah;
       kategoriKeluar[kategori] = (kategoriKeluar[kategori] || 0) + jumlah;
     }
+    dompetSummary[dompet] = (dompetSummary[dompet] || 0) + (tipe === "Pemasukan" ? jumlah : -jumlah);
   }
 
   const kategoriUrut = Object.entries(kategoriKeluar).sort((a, b) => b[1] - a[1]);
-
-  let rincian = "";
+  let rincianKategori = "";
   for (const [kat, jml] of kategoriUrut) {
     const persen = totalKeluar > 0 ? Math.round((jml / totalKeluar) * 100) : 0;
-    rincian += `  • ${kat}: ${formatRupiah(jml)} (${persen}%)\n`;
+    rincianKategori += `  • ${kat}: ${formatRupiah(jml)} (${persen}%)\n`;
+  }
+
+  let rincianDompet = "";
+  for (const [dompet, saldo] of Object.entries(dompetSummary)) {
+    const icon = saldo >= 0 ? "🟢" : "🔴";
+    rincianDompet += `  ${icon} ${dompet}: ${formatRupiah(Math.abs(saldo))} ${saldo >= 0 ? "surplus" : "defisit"}\n`;
   }
 
   const saldo = totalMasuk - totalKeluar;
@@ -207,7 +228,8 @@ async function handleLaporan(chatId) {
     `⬆️ Total pemasukan: ${formatRupiah(totalMasuk)}\n` +
     `⬇️ Total pengeluaran: ${formatRupiah(totalKeluar)}\n` +
     `${saldoIcon} Selisih: ${formatRupiah(saldo)}\n\n` +
-    `🗂 *Rincian pengeluaran:*\n${rincian}\n` +
+    `🗂 *Rincian pengeluaran:*\n${rincianKategori}\n` +
+    `👛 *Per dompet:*\n${rincianDompet}\n` +
     `📝 Total transaksi: ${dataBulan.length}`;
 
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
@@ -234,7 +256,7 @@ async function handleHapus(chatId) {
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A${sheetRowNumber}:E${sheetRowNumber}`,
+    range: `${SHEET_NAME}!A${sheetRowNumber}:F${sheetRowNumber}`,
   });
 
   const pesan =
@@ -242,6 +264,7 @@ async function handleHapus(chatId) {
     `📅 ${lastRow[0]}\n` +
     `📝 ${lastRow[1]}\n` +
     `📁 ${lastRow[2]}\n` +
+    `👛 ${lastRow[5] || "Cash"}\n` +
     `💵 ${formatRupiah(parseFloat(lastRow[4]))}`;
 
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
@@ -281,6 +304,7 @@ bot.on("message", async (msg) => {
       `${parsed.emoji} ${parsed.deskripsi}\n` +
       `📁 Kategori: ${parsed.kategori}\n` +
       `📊 Tipe: ${parsed.tipe.charAt(0).toUpperCase() + parsed.tipe.slice(1)}\n` +
+      `👛 Dompet: ${parsed.dompet || "Cash"}\n` +
       `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n\n` +
       `_${parsed.balasan}_`;
 
@@ -291,4 +315,4 @@ bot.on("message", async (msg) => {
   }
 });
 
-console.log("🤖 Bot keuangan v2 aktif — dengan /saldo, /laporan, /hapus!");
+console.log("🤖 Bot keuangan v3 aktif — dengan kolom dompet & format tanggal baru!");
