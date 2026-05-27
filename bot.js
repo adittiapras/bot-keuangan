@@ -126,6 +126,12 @@ async function handleStart(chatId) {
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
 
+function parseJumlah(str) {
+  if (!str) return 0;
+  const bersih = str.toString().replace(/Rp/gi, "").replace(/\./g, "").replace(/,/g, "").trim();
+  return parseFloat(bersih) || 0;
+}
+
 async function handleSaldo(chatId) {
   bot.sendChatAction(chatId, "typing");
   const rows = await ambilSemuaData();
@@ -135,21 +141,24 @@ async function handleSaldo(chatId) {
   let hariIniMasuk = 0, hariIniKeluar = 0;
 
   const hariIniStr = new Date().toLocaleDateString("id-ID", {
-    timeZone: "Asia/Jakarta", day: "numeric", month: "long", year: "numeric"
+    timeZone: "Asia/Jakarta", day: "2-digit", month: "2-digit", year: "numeric"
   });
 
   for (const r of data) {
-    const jumlah = parseFloat(r[4]) || 0;
+    const jumlah = parseJumlah(r[4]);
     const tipe = r[3];
-    // Format baru: "Selasa, 27 Mei 2026 15.30" — ambil bagian tanggal saja
-    const tanggalRow = r[0] ? r[0].replace(/^[^,]+,\s*/, "").split(" pukul")[0].trim() : "";
+    const tanggalRow = r[0] ? r[0].split(",")[0].trim() : "";
+
+    // Cek apakah tanggal row mengandung tanggal hari ini
+    const isHariIni = r[0] && r[0].includes(hariIniStr.split("/").reverse().join("/") ) || 
+                      r[0] && r[0].includes(hariIniStr);
 
     if (tipe === "Pemasukan") {
       totalMasuk += jumlah;
-      if (tanggalRow === hariIniStr) hariIniMasuk += jumlah;
+      if (isHariIni) hariIniMasuk += jumlah;
     } else {
       totalKeluar += jumlah;
-      if (tanggalRow === hariIniStr) hariIniKeluar += jumlah;
+      if (isHariIni) hariIniKeluar += jumlah;
     }
   }
 
@@ -179,10 +188,7 @@ async function handleLaporan(chatId) {
   const bulanIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "long" });
   const tahunIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
 
-  const dataBulan = data.filter(r => {
-    if (!r[0]) return false;
-    return r[0].includes(bulanIni) && r[0].includes(tahunIni);
-  });
+  const dataBulan = data.filter(r => r[0] && r[0].includes(bulanIni) && r[0].includes(tahunIni));
 
   if (dataBulan.length === 0) {
     return bot.sendMessage(chatId, `📊 Belum ada transaksi di ${getBulanIni()} ini.`);
@@ -193,7 +199,7 @@ async function handleLaporan(chatId) {
   let totalMasuk = 0, totalKeluar = 0;
 
   for (const r of dataBulan) {
-    const jumlah = parseFloat(r[4]) || 0;
+    const jumlah = parseJumlah(r[4]);
     const tipe = r[3];
     const kategori = r[2] || "Lainnya";
     const dompet = r[5] || "Cash";
@@ -265,11 +271,10 @@ async function handleHapus(chatId) {
     `📝 ${lastRow[1]}\n` +
     `📁 ${lastRow[2]}\n` +
     `👛 ${lastRow[5] || "Cash"}\n` +
-    `💵 ${formatRupiah(parseFloat(lastRow[4]))}`;
+    `💵 ${formatRupiah(parseJumlah(lastRow[4]))}`;
 
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
-
 async function handleDebug(chatId) {
   const rows = await ambilSemuaData();
   
