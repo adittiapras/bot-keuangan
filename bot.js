@@ -13,7 +13,7 @@ const SHEET_NAME = "Sheet1";
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // Setup Google Sheets
 const auth = new google.auth.GoogleAuth({
