@@ -12,7 +12,6 @@ const SHEET_NAME = "Sheet1";
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-// Setup Google Sheets
 const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
@@ -40,30 +39,30 @@ Jika pesan tidak ada hubungannya dengan transaksi keuangan, balas dengan:
 
 Pesan user: `;
 
-// Panggil Gemini lewat REST API langsung (lebih stabil)
 async function tanyaGemini(teks) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
   const body = {
     contents: [{ parts: [{ text: PROMPT_TEMPLATE + teks }] }],
     generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
   };
-
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
-
   const data = await res.json();
-
-  if (!res.ok) {
-    throw new Error(`Gemini error ${res.status}: ${JSON.stringify(data)}`);
-  }
-
+  if (!res.ok) throw new Error(`Gemini error ${res.status}: ${JSON.stringify(data)}`);
   return data.candidates[0].content.parts[0].text;
 }
 
-// Format tanggal Indonesia
+async function ambilSemuaData() {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A:E`,
+  });
+  return res.data.values || [];
+}
+
 function getTanggal() {
   return new Date().toLocaleString("id-ID", {
     timeZone: "Asia/Jakarta",
@@ -72,14 +71,19 @@ function getTanggal() {
   });
 }
 
-// Format angka ke Rupiah
+function getBulanIni() {
+  return new Date().toLocaleString("id-ID", {
+    timeZone: "Asia/Jakarta",
+    month: "long", year: "numeric",
+  });
+}
+
 function formatRupiah(angka) {
   return new Intl.NumberFormat("id-ID", {
     style: "currency", currency: "IDR", minimumFractionDigits: 0,
   }).format(angka);
 }
 
-// Simpan ke Google Sheets
 async function simpanKeSheets(data) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
@@ -97,17 +101,166 @@ async function simpanKeSheets(data) {
   });
 }
 
-// Handle pesan masuk
+async function handleStart(chatId) {
+  const pesan =
+    `Halo! 👋 Aku bot pencatat keuangan kamu.\n\n` +
+    `📝 *Catat transaksi* — ketik bebas, contoh:\n` +
+    `💸 makan siang 25rb\n` +
+    `💰 gaji masuk 3jt\n\n` +
+    `📊 *Command tersedia:*\n` +
+    `/saldo — cek saldo & ringkasan hari ini\n` +
+    `/laporan — laporan lengkap bulan ini\n` +
+    `/hapus — batalkan transaksi terakhir\n` +
+    `/help — tampilkan pesan ini lagi`;
+  bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
+}
+
+async function handleSaldo(chatId) {
+  bot.sendChatAction(chatId, "typing");
+  const rows = await ambilSemuaData();
+  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+
+  let totalMasuk = 0, totalKeluar = 0;
+  const hariIni = new Date().toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" });
+  let hariIniMasuk = 0, hariIniKeluar = 0;
+
+  for (const r of data) {
+    const jumlah = parseFloat(r[4]) || 0;
+    const tipe = r[3];
+    const tanggalRow = r[0] ? r[0].split(" ")[0] : "";
+    if (tipe === "Pemasukan") {
+      totalMasuk += jumlah;
+      if (tanggalRow === hariIni) hariIniMasuk += jumlah;
+    } else {
+      totalKeluar += jumlah;
+      if (tanggalRow === hariIni) hariIniKeluar += jumlah;
+    }
+  }
+
+  const saldo = totalMasuk - totalKeluar;
+  const saldoIcon = saldo >= 0 ? "🟢" : "🔴";
+
+  const pesan =
+    `💰 *Saldo Kamu*\n\n` +
+    `${saldoIcon} *Saldo saat ini: ${formatRupiah(saldo)}*\n\n` +
+    `📅 *Hari ini:*\n` +
+    `⬆️ Masuk: ${formatRupiah(hariIniMasuk)}\n` +
+    `⬇️ Keluar: ${formatRupiah(hariIniKeluar)}\n\n` +
+    `📊 *Semua waktu:*\n` +
+    `⬆️ Total masuk: ${formatRupiah(totalMasuk)}\n` +
+    `⬇️ Total keluar: ${formatRupiah(totalKeluar)}\n` +
+    `📝 Total transaksi: ${data.length}`;
+
+  bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
+}
+
+async function handleLaporan(chatId) {
+  bot.sendChatAction(chatId, "typing");
+  const rows = await ambilSemuaData();
+  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+
+  const sekarang = new Date();
+  const bulanIni = sekarang.getMonth();
+  const tahunIni = sekarang.getFullYear();
+
+  const dataBulan = data.filter(r => {
+    if (!r[0]) return false;
+    const parts = r[0].split(" ")[0].split("/");
+    if (parts.length < 3) return false;
+    const bln = parseInt(parts[1]) - 1;
+    const thn = parseInt(parts[2]);
+    return bln === bulanIni && thn === tahunIni;
+  });
+
+  if (dataBulan.length === 0) {
+    return bot.sendMessage(chatId, `📊 Belum ada transaksi di ${getBulanIni()} ini.`);
+  }
+
+  const kategoriKeluar = {};
+  let totalMasuk = 0, totalKeluar = 0;
+
+  for (const r of dataBulan) {
+    const jumlah = parseFloat(r[4]) || 0;
+    const tipe = r[3];
+    const kategori = r[2] || "Lainnya";
+    if (tipe === "Pemasukan") {
+      totalMasuk += jumlah;
+    } else {
+      totalKeluar += jumlah;
+      kategoriKeluar[kategori] = (kategoriKeluar[kategori] || 0) + jumlah;
+    }
+  }
+
+  const kategoriUrut = Object.entries(kategoriKeluar).sort((a, b) => b[1] - a[1]);
+
+  let rincian = "";
+  for (const [kat, jml] of kategoriUrut) {
+    const persen = totalKeluar > 0 ? Math.round((jml / totalKeluar) * 100) : 0;
+    rincian += `  • ${kat}: ${formatRupiah(jml)} (${persen}%)\n`;
+  }
+
+  const saldo = totalMasuk - totalKeluar;
+  const saldoIcon = saldo >= 0 ? "🟢" : "🔴";
+
+  const pesan =
+    `📊 *Laporan ${getBulanIni()}*\n\n` +
+    `⬆️ Total pemasukan: ${formatRupiah(totalMasuk)}\n` +
+    `⬇️ Total pengeluaran: ${formatRupiah(totalKeluar)}\n` +
+    `${saldoIcon} Selisih: ${formatRupiah(saldo)}\n\n` +
+    `🗂 *Rincian pengeluaran:*\n${rincian}\n` +
+    `📝 Total transaksi: ${dataBulan.length}`;
+
+  bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
+}
+
+async function handleHapus(chatId) {
+  bot.sendChatAction(chatId, "typing");
+  const rows = await ambilSemuaData();
+
+  let lastRowIndex = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i][3] === "Pemasukan" || rows[i][3] === "Pengeluaran") {
+      lastRowIndex = i;
+      break;
+    }
+  }
+
+  if (lastRowIndex === -1) {
+    return bot.sendMessage(chatId, "Tidak ada transaksi yang bisa dihapus.");
+  }
+
+  const lastRow = rows[lastRowIndex];
+  const sheetRowNumber = lastRowIndex + 1;
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A${sheetRowNumber}:E${sheetRowNumber}`,
+  });
+
+  const pesan =
+    `🗑 *Transaksi terakhir dihapus!*\n\n` +
+    `📅 ${lastRow[0]}\n` +
+    `📝 ${lastRow[1]}\n` +
+    `📁 ${lastRow[2]}\n` +
+    `💵 ${formatRupiah(parseFloat(lastRow[4]))}`;
+
+  bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
+}
+
+// ============================================================
+// MAIN
+// ============================================================
+
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const teks = msg.text;
 
-  if (teks === "/start") {
-    return bot.sendMessage(chatId,
-      `Halo! 👋 Aku bot pencatat keuangan kamu.\n\nCara pakai:\nKetik transaksi kamu dengan bebas, contoh:\n\n💸 *makan siang 25rb*\n💸 *beli bensin 50000*\n💰 *gaji masuk 3jt*\n💰 *transfer dari ortu 200rb*\n\nSemua otomatis tercatat di Google Sheets kamu! 📊`,
-      { parse_mode: "Markdown" }
-    );
-  }
+  if (!teks) return;
+
+  if (teks === "/start" || teks === "/help") return handleStart(chatId);
+  if (teks === "/saldo") return handleSaldo(chatId);
+  if (teks === "/laporan") return handleLaporan(chatId);
+  if (teks === "/hapus") return handleHapus(chatId);
 
   bot.sendChatAction(chatId, "typing");
 
@@ -138,4 +291,4 @@ bot.on("message", async (msg) => {
   }
 });
 
-console.log("🤖 Bot keuangan aktif dan siap digunakan!");
+console.log("🤖 Bot keuangan v2 aktif — dengan /saldo, /laporan, /hapus!");
