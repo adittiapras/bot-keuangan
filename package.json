@@ -1,14 +1,16 @@
 {
   "name": "bot-keuangan-telegram",
-  "version": "2.0.0",
-  "description": "Bot Telegram pencatat keuangan otomatis dengan AI Gemini - 100% Gratis",
+  "version": "3.0.0",
+  "description": "Bot Telegram pencatat keuangan otomatis - 100% Gratis",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.15.0",
     "googleapis": "^140.0.0",
     "node-telegram-bot-api": "^0.66.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
