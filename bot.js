@@ -270,6 +270,40 @@ async function handleHapus(chatId) {
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
 
+async function handleDebug(chatId) {
+  const rows = await ambilSemuaData();
+  
+  if (rows.length === 0) {
+    return bot.sendMessage(chatId, "Sheets kosong, tidak ada data sama sekali.");
+  }
+
+  // Tampilkan 3 baris pertama data mentah
+  let pesan = `🔍 *Debug Data*\n\nTotal baris: ${rows.length}\n\n`;
+  
+  const sample = rows.slice(0, 3);
+  for (let i = 0; i < sample.length; i++) {
+    const r = sample[i];
+    pesan += `*Baris ${i + 1}:*\n`;
+    pesan += `A: \`${r[0]}\`\n`;
+    pesan += `B: \`${r[1]}\`\n`;
+    pesan += `C: \`${r[2]}\`\n`;
+    pesan += `D: \`${r[3]}\`\n`;
+    pesan += `E: \`${r[4]}\`\n`;
+    pesan += `F: \`${r[5]}\`\n\n`;
+  }
+
+  // Cek filter
+  const filtered = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+  pesan += `Filter hasil: ${filtered.length} baris lolos\n`;
+
+  if (filtered[0]) {
+    const jumlah = parseFloat(filtered[0][4]);
+    pesan += `Jumlah baris pertama: \`${filtered[0][4]}\` → parsed: \`${jumlah}\``;
+  }
+
+  bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
+}
+
 // ============================================================
 // MAIN
 // ============================================================
@@ -282,6 +316,7 @@ bot.on("message", async (msg) => {
 
   if (teks === "/start" || teks === "/help") return handleStart(chatId);
   if (teks === "/saldo") return handleSaldo(chatId);
+  if (teks === "/debug") return handleDebug(chatId);
   if (teks === "/laporan") return handleLaporan(chatId);
   if (teks === "/hapus") return handleHapus(chatId);
 
