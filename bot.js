@@ -140,18 +140,19 @@ async function handleSaldo(chatId) {
   let totalMasuk = 0, totalKeluar = 0;
   let hariIniMasuk = 0, hariIniKeluar = 0;
 
-  const hariIniStr = new Date().toLocaleDateString("id-ID", {
-    timeZone: "Asia/Jakarta", day: "2-digit", month: "2-digit", year: "numeric"
-  });
+  // Format hari ini jadi "27/05/2026" — cocok dengan format di Sheets
+  const sekarang = new Date();
+  const dd = String(sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "2-digit" })).padStart(2, "0");
+  const mm = String(sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "2-digit" })).padStart(2, "0");
+  const yyyy = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
+  const hariIniStr = `${dd}/${mm}/${yyyy}`;
 
   for (const r of data) {
     const jumlah = parseJumlah(r[4]);
     const tipe = r[3];
+    // Ambil bagian tanggal saja (sebelum koma)
     const tanggalRow = r[0] ? r[0].split(",")[0].trim() : "";
-
-    // Cek apakah tanggal row mengandung tanggal hari ini
-    const isHariIni = r[0] && r[0].includes(hariIniStr.split("/").reverse().join("/") ) || 
-                      r[0] && r[0].includes(hariIniStr);
+    const isHariIni = tanggalRow === hariIniStr;
 
     if (tipe === "Pemasukan") {
       totalMasuk += jumlah;
@@ -168,7 +169,7 @@ async function handleSaldo(chatId) {
   const pesan =
     `💰 *Saldo Kamu*\n\n` +
     `${saldoIcon} *Saldo saat ini: ${formatRupiah(saldo)}*\n\n` +
-    `📅 *Hari ini:*\n` +
+    `📅 *Hari ini (${hariIniStr}):*\n` +
     `⬆️ Masuk: ${formatRupiah(hariIniMasuk)}\n` +
     `⬇️ Keluar: ${formatRupiah(hariIniKeluar)}\n\n` +
     `📊 *Semua waktu:*\n` +
