@@ -140,19 +140,23 @@ async function handleSaldo(chatId) {
   let totalMasuk = 0, totalKeluar = 0;
   let hariIniMasuk = 0, hariIniKeluar = 0;
 
-  // Format hari ini jadi "27/05/2026" — cocok dengan format di Sheets
+  // Ambil hari, bulan, tahun hari ini dalam bahasa Indonesia
   const sekarang = new Date();
-  const dd = String(sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "2-digit" })).padStart(2, "0");
-  const mm = String(sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "2-digit" })).padStart(2, "0");
-  const yyyy = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
-  const hariIniStr = `${dd}/${mm}/${yyyy}`;
+  const hariIniTgl = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric" });
+  const hariIniBulan = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "long" });
+  const hariIniTahun = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
 
   for (const r of data) {
     const jumlah = parseJumlah(r[4]);
     const tipe = r[3];
-    // Ambil bagian tanggal saja (sebelum koma)
-    const tanggalRow = r[0] ? r[0].split(",")[0].trim() : "";
-    const isHariIni = tanggalRow === hariIniStr;
+    const tanggalRow = r[0] || "";
+
+    // Format di Sheets: "Kamis, 28 Mei 2026 pukul 18.57"
+    // Cukup cek apakah mengandung tanggal + bulan + tahun hari ini
+    const isHariIni =
+      tanggalRow.includes(hariIniTgl) &&
+      tanggalRow.includes(hariIniBulan) &&
+      tanggalRow.includes(hariIniTahun);
 
     if (tipe === "Pemasukan") {
       totalMasuk += jumlah;
@@ -169,7 +173,7 @@ async function handleSaldo(chatId) {
   const pesan =
     `💰 *Saldo Kamu*\n\n` +
     `${saldoIcon} *Saldo saat ini: ${formatRupiah(saldo)}*\n\n` +
-    `📅 *Hari ini (${hariIniStr}):*\n` +
+    `📅 *Hari ini:*\n` +
     `⬆️ Masuk: ${formatRupiah(hariIniMasuk)}\n` +
     `⬇️ Keluar: ${formatRupiah(hariIniKeluar)}\n\n` +
     `📊 *Semua waktu:*\n` +
@@ -179,7 +183,6 @@ async function handleSaldo(chatId) {
 
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
-
 async function handleLaporan(chatId) {
   bot.sendChatAction(chatId, "typing");
   const rows = await ambilSemuaData();
