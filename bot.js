@@ -123,6 +123,8 @@ async function handleStart(chatId) {
     `/laporan — laporan lengkap bulan ini\n` +
     `/hapus — batalkan transaksi terakhir\n` +
     `/riwayat — lihat 10 transaksi terakhir\n` +
+    `/grafik — pie chart pengeluaran per kategori\n` +
+    `/grafikmingguan — bar chart pemasukan vs pengeluaran\n` +
     `/help — tampilkan pesan ini lagi`;
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
@@ -359,6 +361,145 @@ bot.on("callback_query", async (query) => {
   }
 });
 
+async function handleGrafikKategori(chatId) {
+  bot.sendChatAction(chatId, "upload_photo");
+  const rows = await ambilSemuaData();
+  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+
+  const sekarang = new Date();
+  const bulanIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "long" });
+  const tahunIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
+
+  const dataBulan = data.filter(r => r[0] && r[0].includes(bulanIni) && r[0].includes(tahunIni));
+  const pengeluaran = dataBulan.filter(r => r[3] === "Pengeluaran");
+
+  if (pengeluaran.length === 0) {
+    return bot.sendMessage(chatId, `📊 Belum ada pengeluaran di ${bulanIni} ${tahunIni}.`);
+  }
+
+  // Hitung per kategori
+  const kategori = {};
+  for (const r of pengeluaran) {
+    const kat = r[2] || "Lainnya";
+    kategori[kat] = (kategori[kat] || 0) + parseJumlah(r[4]);
+  }
+
+  const labels = Object.keys(kategori);
+  const values = Object.values(kategori);
+  const total = values.reduce((a, b) => a + b, 0);
+
+  // Warna untuk tiap slice
+  const warna = [
+    "#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0",
+    "#9966FF", "#FF9F40", "#E7E9ED", "#71B37C"
+  ];
+
+  const chartConfig = {
+    type: "pie",
+    data: {
+      labels: labels.map((l, i) => `${l} (${Math.round(values[i] / total * 100)}%)`),
+      datasets: [{
+        data: values,
+        backgroundColor: warna.slice(0, labels.length),
+      }]
+    },
+    options: {
+      title: {
+        display: true,
+        text: `Pengeluaran ${bulanIni} ${tahunIni}`,
+        fontSize: 16,
+      },
+      legend: { position: "bottom" }
+    }
+  };
+
+  const url = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}&w=500&h=400&bkg=white`;
+
+  await bot.sendPhoto(chatId, url, {
+    caption: `🥧 *Pengeluaran ${bulanIni} ${tahunIni} per Kategori*\nTotal: ${formatRupiah(total)}`,
+    parse_mode: "Markdown"
+  });
+}
+
+async function handleGrafikMingguan(chatId) {
+  bot.sendChatAction(chatId, "upload_photo");
+  const rows = await ambilSemuaData();
+  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+
+  const sekarang = new Date();
+  const bulanIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "long" });
+  const tahunIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
+
+  const dataBulan = data.filter(r => r[0] && r[0].includes(bulanIni) && r[0].includes(tahunIni));
+
+  if (dataBulan.length === 0) {
+    return bot.sendMessage(chatId, `📊 Belum ada transaksi di ${bulanIni} ${tahunIni}.`);
+  }
+
+  // Kelompokkan per minggu (Minggu 1-5)
+  const minggu = { "Minggu 1": [0,0], "Minggu 2": [0,0], "Minggu 3": [0,0], "Minggu 4": [0,0] };
+
+  for (const r of dataBulan) {
+    if (!r[0]) continue;
+    // Ambil tanggal dari format "Kamis, 28 Mei 2026 pukul 18.57"
+    const matches = r[0].match(/(\d+)\s+\w+\s+\d{4}/);
+    if (!matches) continue;
+    const tgl = parseInt(matches[0]);
+    const jumlah = parseJumlah(r[4]);
+    const tipe = r[3];
+
+    let mgg;
+    if (tgl <= 7) mgg = "Minggu 1";
+    else if (tgl <= 14) mgg = "Minggu 2";
+    else if (tgl <= 21) mgg = "Minggu 3";
+    else mgg = "Minggu 4";
+
+    if (tipe === "Pemasukan") minggu[mgg][0] += jumlah;
+    else minggu[mgg][1] += jumlah;
+  }
+
+  const labels = Object.keys(minggu);
+  const pemasukan = labels.map(m => minggu[m][0]);
+  const pengeluaran = labels.map(m => minggu[m][1]);
+
+  const chartConfig = {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Pemasukan",
+          data: pemasukan,
+          backgroundColor: "#4BC0C0",
+        },
+        {
+          label: "Pengeluaran",
+          data: pengeluaran,
+          backgroundColor: "#FF6384",
+        }
+      ]
+    },
+    options: {
+      title: {
+        display: true,
+        text: `Pemasukan vs Pengeluaran ${bulanIni} ${tahunIni}`,
+        fontSize: 16,
+      },
+      scales: {
+        yAxes: [{ ticks: { beginAtZero: true } }]
+      },
+      legend: { position: "bottom" }
+    }
+  };
+
+  const url = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}&w=500&h=400&bkg=white`;
+
+  await bot.sendPhoto(chatId, url, {
+    caption: `📊 *Pemasukan vs Pengeluaran per Minggu*\n${bulanIni} ${tahunIni}`,
+    parse_mode: "Markdown"
+  });
+}
+
 async function handleDebug(chatId) {
   const rows = await ambilSemuaData();
   
@@ -409,6 +550,8 @@ bot.on("message", async (msg) => {
   if (teks === "/laporan") return handleLaporan(chatId);
   if (teks === "/hapus") return handleHapus(chatId);
   if (teks === "/riwayat") return handleRiwayat(chatId);
+  if (teks === "/grafik") return handleGrafikKategori(chatId);
+  if (teks === "/grafikmingguan") return handleGrafikMingguan(chatId);
 
   bot.sendChatAction(chatId, "typing");
 
