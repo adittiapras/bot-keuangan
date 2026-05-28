@@ -122,6 +122,7 @@ async function handleStart(chatId) {
     `/saldo — cek saldo & ringkasan hari ini\n` +
     `/laporan — laporan lengkap bulan ini\n` +
     `/hapus — batalkan transaksi terakhir\n` +
+    `/riwayat — lihat 10 transaksi terakhir\n` +
     `/help — tampilkan pesan ini lagi`;
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
@@ -246,6 +247,35 @@ async function handleLaporan(chatId) {
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
 
+async function handleRiwayat(chatId) {
+  bot.sendChatAction(chatId, "typing");
+  const rows = await ambilSemuaData();
+  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+
+  if (data.length === 0) {
+    return bot.sendMessage(chatId, "Belum ada transaksi tercatat.");
+  }
+
+  // Ambil 10 terakhir, dibalik biar yang terbaru di atas
+  const sepuluhTerakhir = data.slice(-10).reverse();
+
+  let pesan = `🕐 *10 Transaksi Terakhir*\n\n`;
+  for (const r of sepuluhTerakhir) {
+    const tipe = r[3];
+    const icon = tipe === "Pemasukan" ? "⬆️" : "⬇️";
+    const jumlah = parseJumlah(r[4]);
+    const dompet = r[5] || "Cash";
+    pesan += `${icon} *${r[1]}*\n`;
+    pesan += `    💵 ${formatRupiah(jumlah)} • 📁 ${r[2]} • 👛 ${dompet}\n`;
+    pesan += `    🕐 ${r[0]}\n\n`;
+  }
+
+  bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
+}
+
+// Simpan data transaksi yang mau dihapus sementara (per user)
+const hapusPending = {};
+
 async function handleHapus(chatId) {
   bot.sendChatAction(chatId, "typing");
   const rows = await ambilSemuaData();
@@ -263,23 +293,72 @@ async function handleHapus(chatId) {
   }
 
   const lastRow = rows[lastRowIndex];
-  const sheetRowNumber = lastRowIndex + 1;
 
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A${sheetRowNumber}:F${sheetRowNumber}`,
-  });
+  // Simpan dulu index-nya, tunggu konfirmasi
+  hapusPending[chatId] = lastRowIndex;
 
   const pesan =
-    `🗑 *Transaksi terakhir dihapus!*\n\n` +
+    `🗑 *Hapus transaksi ini?*\n\n` +
     `📅 ${lastRow[0]}\n` +
     `📝 ${lastRow[1]}\n` +
     `📁 ${lastRow[2]}\n` +
     `👛 ${lastRow[5] || "Cash"}\n` +
     `💵 ${formatRupiah(parseJumlah(lastRow[4]))}`;
 
-  bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
+  // Kirim dengan tombol Ya / Tidak
+  bot.sendMessage(chatId, pesan, {
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: [[
+        { text: "✅ Ya, hapus", callback_data: "hapus_ya" },
+        { text: "❌ Tidak", callback_data: "hapus_tidak" }
+      ]]
+    }
+  });
 }
+
+// Handle tombol konfirmasi
+bot.on("callback_query", async (query) => {
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+
+  if (query.data === "hapus_ya") {
+    const lastRowIndex = hapusPending[chatId];
+
+    if (lastRowIndex === undefined) {
+      bot.answerCallbackQuery(query.id);
+      return bot.editMessageText("⚠️ Sesi hapus sudah kedaluwarsa, coba /hapus lagi.", {
+        chat_id: chatId, message_id: messageId
+      });
+    }
+
+    const rows = await ambilSemuaData();
+    const lastRow = rows[lastRowIndex];
+    const sheetRowNumber = lastRowIndex + 1;
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A${sheetRowNumber}:F${sheetRowNumber}`,
+    });
+
+    delete hapusPending[chatId];
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText(
+      `✅ *Transaksi berhasil dihapus!*\n\n` +
+      `📝 ${lastRow[1]}\n` +
+      `💵 ${formatRupiah(parseJumlah(lastRow[4]))}`,
+      { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
+    );
+
+  } else if (query.data === "hapus_tidak") {
+    delete hapusPending[chatId];
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText("👍 Oke, transaksi tidak jadi dihapus.", {
+      chat_id: chatId, message_id: messageId
+    });
+  }
+});
+
 async function handleDebug(chatId) {
   const rows = await ambilSemuaData();
   
@@ -329,6 +408,7 @@ bot.on("message", async (msg) => {
   if (teks === "/debug") return handleDebug(chatId);
   if (teks === "/laporan") return handleLaporan(chatId);
   if (teks === "/hapus") return handleHapus(chatId);
+  if (teks === "/riwayat") return handleRiwayat(chatId);
 
   bot.sendChatAction(chatId, "typing");
 
