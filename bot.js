@@ -227,7 +227,8 @@ async function handleLaporan(chatId) {
   let rincianDompet = "";
   for (const [dompet, saldo] of Object.entries(dompetSummary)) {
     const icon = saldo >= 0 ? "🟢" : "🔴";
-    rincianDompet += `  ${icon} ${dompet}: ${formatRupiah(Math.abs(saldo))} ${saldo >= 0 ? "surplus" : "defisit"}\n`;
+    const jumlahStr = saldo >= 0 ? formatRupiah(saldo) : `-${formatRupiah(Math.abs(saldo))}`;
+    rincianDompet += `  ${icon} ${dompet}: ${jumlahStr}\n`;
   }
 
   const saldo = totalMasuk - totalKeluar;
