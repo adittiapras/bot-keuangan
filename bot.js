@@ -44,6 +44,10 @@ Jika pesan tidak ada hubungannya dengan transaksi keuangan, balas dengan:
 
 Pesan user: `;
 
+// ============================================================
+// HELPER FUNCTIONS
+// ============================================================
+
 async function tanyaGemini(teks) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
   const body = {
@@ -60,24 +64,21 @@ async function tanyaGemini(teks) {
   return data.candidates[0].content.parts[0].text;
 }
 
-async function ambilSemuaData() {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:F`,
-  });
-  return res.data.values || [];
-}
-
-function getTanggal() {
-  return new Date().toLocaleString("id-ID", {
+function getTanggalParts() {
+  const sekarang = new Date();
+  const tanggal = sekarang.toLocaleDateString("id-ID", {
     timeZone: "Asia/Jakarta",
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+    day: "2-digit", month: "2-digit", year: "numeric"
   });
+  const jam = sekarang.toLocaleTimeString("id-ID", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit", minute: "2-digit"
+  });
+  const hari = sekarang.toLocaleDateString("id-ID", {
+    timeZone: "Asia/Jakarta",
+    weekday: "long"
+  });
+  return { tanggal, jam, hari };
 }
 
 function getBulanIni() {
@@ -93,14 +94,36 @@ function formatRupiah(angka) {
   }).format(angka);
 }
 
+function parseJumlah(str) {
+  if (!str) return 0;
+  const bersih = str.toString().replace(/Rp/gi, "").replace(/\./g, "").replace(/,/g, "").trim();
+  return parseFloat(bersih) || 0;
+}
+
+// Kolom: A=0:tanggal, B=1:jam, C=2:hari, D=3:deskripsi, E=4:kategori, F=5:tipe, G=6:jumlah, H=7:dompet
+function isValid(r) {
+  return r[5] && (r[5] === "Pemasukan" || r[5] === "Pengeluaran");
+}
+
+async function ambilSemuaData() {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A:H`,
+  });
+  return res.data.values || [];
+}
+
 async function simpanKeSheets(data) {
+  const { tanggal, jam, hari } = getTanggalParts();
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:F`,
+    range: `${SHEET_NAME}!A:H`,
     valueInputOption: "USER_ENTERED",
     requestBody: {
       values: [[
-        getTanggal(),
+        tanggal,
+        jam,
+        hari,
         data.deskripsi,
         data.kategori,
         data.tipe.charAt(0).toUpperCase() + data.tipe.slice(1),
@@ -110,6 +133,12 @@ async function simpanKeSheets(data) {
     },
   });
 }
+
+const hapusPending = {};
+
+// ============================================================
+// COMMAND HANDLERS
+// ============================================================
 
 async function handleStart(chatId) {
   const pesan =
@@ -121,45 +150,31 @@ async function handleStart(chatId) {
     `📊 *Command tersedia:*\n` +
     `/saldo — cek saldo & ringkasan hari ini\n` +
     `/laporan — laporan lengkap bulan ini\n` +
-    `/hapus — batalkan transaksi terakhir\n` +
     `/riwayat — lihat 10 transaksi terakhir\n` +
     `/grafik — pie chart pengeluaran per kategori\n` +
     `/grafikmingguan — bar chart pemasukan vs pengeluaran\n` +
+    `/hapus — batalkan transaksi terakhir\n` +
     `/help — tampilkan pesan ini lagi`;
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
-}
-
-function parseJumlah(str) {
-  if (!str) return 0;
-  const bersih = str.toString().replace(/Rp/gi, "").replace(/\./g, "").replace(/,/g, "").trim();
-  return parseFloat(bersih) || 0;
 }
 
 async function handleSaldo(chatId) {
   bot.sendChatAction(chatId, "typing");
   const rows = await ambilSemuaData();
-  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+  const data = rows.filter(r => isValid(r));
 
   let totalMasuk = 0, totalKeluar = 0;
   let hariIniMasuk = 0, hariIniKeluar = 0;
 
-  // Ambil hari, bulan, tahun hari ini dalam bahasa Indonesia
-  const sekarang = new Date();
-  const hariIniTgl = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric" });
-  const hariIniBulan = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "long" });
-  const hariIniTahun = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
+  const hariIniStr = new Date().toLocaleDateString("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit", month: "2-digit", year: "numeric"
+  });
 
   for (const r of data) {
-    const jumlah = parseJumlah(r[4]);
-    const tipe = r[3];
-    const tanggalRow = r[0] || "";
-
-    // Format di Sheets: "Kamis, 28 Mei 2026 pukul 18.57"
-    // Cukup cek apakah mengandung tanggal + bulan + tahun hari ini
-    const isHariIni =
-      tanggalRow.includes(hariIniTgl) &&
-      tanggalRow.includes(hariIniBulan) &&
-      tanggalRow.includes(hariIniTahun);
+    const jumlah = parseJumlah(r[6]);
+    const tipe = r[5];
+    const isHariIni = r[0] === hariIniStr;
 
     if (tipe === "Pemasukan") {
       totalMasuk += jumlah;
@@ -176,7 +191,7 @@ async function handleSaldo(chatId) {
   const pesan =
     `💰 *Saldo Kamu*\n\n` +
     `${saldoIcon} *Saldo saat ini: ${formatRupiah(saldo)}*\n\n` +
-    `📅 *Hari ini:*\n` +
+    `📅 *Hari ini (${hariIniStr}):*\n` +
     `⬆️ Masuk: ${formatRupiah(hariIniMasuk)}\n` +
     `⬇️ Keluar: ${formatRupiah(hariIniKeluar)}\n\n` +
     `📊 *Semua waktu:*\n` +
@@ -186,16 +201,21 @@ async function handleSaldo(chatId) {
 
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
+
 async function handleLaporan(chatId) {
   bot.sendChatAction(chatId, "typing");
   const rows = await ambilSemuaData();
-  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+  const data = rows.filter(r => isValid(r));
 
   const sekarang = new Date();
-  const bulanIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "long" });
-  const tahunIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
+  const bulanIni = sekarang.getMonth() + 1;
+  const tahunIni = sekarang.getFullYear();
 
-  const dataBulan = data.filter(r => r[0] && r[0].includes(bulanIni) && r[0].includes(tahunIni));
+  const dataBulan = data.filter(r => {
+    if (!r[0]) return false;
+    const parts = r[0].split("/");
+    return parseInt(parts[1]) === bulanIni && parseInt(parts[2]) === tahunIni;
+  });
 
   if (dataBulan.length === 0) {
     return bot.sendMessage(chatId, `📊 Belum ada transaksi di ${getBulanIni()} ini.`);
@@ -206,10 +226,10 @@ async function handleLaporan(chatId) {
   let totalMasuk = 0, totalKeluar = 0;
 
   for (const r of dataBulan) {
-    const jumlah = parseJumlah(r[4]);
-    const tipe = r[3];
-    const kategori = r[2] || "Lainnya";
-    const dompet = r[5] || "Cash";
+    const jumlah = parseJumlah(r[6]);
+    const tipe = r[5];
+    const kategori = r[4] || "Lainnya";
+    const dompet = r[7] || "Cash";
 
     if (tipe === "Pemasukan") {
       totalMasuk += jumlah;
@@ -252,31 +272,27 @@ async function handleLaporan(chatId) {
 async function handleRiwayat(chatId) {
   bot.sendChatAction(chatId, "typing");
   const rows = await ambilSemuaData();
-  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+  const data = rows.filter(r => isValid(r));
 
   if (data.length === 0) {
     return bot.sendMessage(chatId, "Belum ada transaksi tercatat.");
   }
 
-  // Ambil 10 terakhir, dibalik biar yang terbaru di atas
   const sepuluhTerakhir = data.slice(-10).reverse();
 
   let pesan = `🕐 *10 Transaksi Terakhir*\n\n`;
   for (const r of sepuluhTerakhir) {
-    const tipe = r[3];
+    const tipe = r[5];
     const icon = tipe === "Pemasukan" ? "⬆️" : "⬇️";
-    const jumlah = parseJumlah(r[4]);
-    const dompet = r[5] || "Cash";
-    pesan += `${icon} *${r[1]}*\n`;
-    pesan += `    💵 ${formatRupiah(jumlah)} • 📁 ${r[2]} • 👛 ${dompet}\n`;
-    pesan += `    🕐 ${r[0]}\n\n`;
+    const jumlah = parseJumlah(r[6]);
+    const dompet = r[7] || "Cash";
+    pesan += `${icon} *${r[3]}*\n`;
+    pesan += `    💵 ${formatRupiah(jumlah)} • 📁 ${r[4]} • 👛 ${dompet}\n`;
+    pesan += `    🕐 ${r[0]} ${r[1]} (${r[2]})\n\n`;
   }
 
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
-
-// Simpan data transaksi yang mau dihapus sementara (per user)
-const hapusPending = {};
 
 async function handleHapus(chatId) {
   bot.sendChatAction(chatId, "typing");
@@ -284,10 +300,7 @@ async function handleHapus(chatId) {
 
   let lastRowIndex = -1;
   for (let i = rows.length - 1; i >= 0; i--) {
-    if (rows[i][3] === "Pemasukan" || rows[i][3] === "Pengeluaran") {
-      lastRowIndex = i;
-      break;
-    }
+    if (isValid(rows[i])) { lastRowIndex = i; break; }
   }
 
   if (lastRowIndex === -1) {
@@ -295,19 +308,16 @@ async function handleHapus(chatId) {
   }
 
   const lastRow = rows[lastRowIndex];
-
-  // Simpan dulu index-nya, tunggu konfirmasi
   hapusPending[chatId] = lastRowIndex;
 
   const pesan =
     `🗑 *Hapus transaksi ini?*\n\n` +
-    `📅 ${lastRow[0]}\n` +
-    `📝 ${lastRow[1]}\n` +
-    `📁 ${lastRow[2]}\n` +
-    `👛 ${lastRow[5] || "Cash"}\n` +
-    `💵 ${formatRupiah(parseJumlah(lastRow[4]))}`;
+    `📅 ${lastRow[0]} ${lastRow[1]} (${lastRow[2]})\n` +
+    `📝 ${lastRow[3]}\n` +
+    `📁 ${lastRow[4]}\n` +
+    `👛 ${lastRow[7] || "Cash"}\n` +
+    `💵 ${formatRupiah(parseJumlah(lastRow[6]))}`;
 
-  // Kirim dengan tombol Ya / Tidak
   bot.sendMessage(chatId, pesan, {
     parse_mode: "Markdown",
     reply_markup: {
@@ -319,7 +329,6 @@ async function handleHapus(chatId) {
   });
 }
 
-// Handle tombol konfirmasi
 bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const messageId = query.message.message_id;
@@ -340,15 +349,15 @@ bot.on("callback_query", async (query) => {
 
     await sheets.spreadsheets.values.clear({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A${sheetRowNumber}:F${sheetRowNumber}`,
+      range: `${SHEET_NAME}!A${sheetRowNumber}:H${sheetRowNumber}`,
     });
 
     delete hapusPending[chatId];
     bot.answerCallbackQuery(query.id);
     bot.editMessageText(
       `✅ *Transaksi berhasil dihapus!*\n\n` +
-      `📝 ${lastRow[1]}\n` +
-      `💵 ${formatRupiah(parseJumlah(lastRow[4]))}`,
+      `📝 ${lastRow[3]}\n` +
+      `💵 ${formatRupiah(parseJumlah(lastRow[6]))}`,
       { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
     );
 
@@ -364,59 +373,50 @@ bot.on("callback_query", async (query) => {
 async function handleGrafikKategori(chatId) {
   bot.sendChatAction(chatId, "upload_photo");
   const rows = await ambilSemuaData();
-  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+  const data = rows.filter(r => isValid(r));
 
   const sekarang = new Date();
-  const bulanIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "long" });
-  const tahunIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
+  const bulanIni = sekarang.getMonth() + 1;
+  const tahunIni = sekarang.getFullYear();
 
-  const dataBulan = data.filter(r => r[0] && r[0].includes(bulanIni) && r[0].includes(tahunIni));
-  const pengeluaran = dataBulan.filter(r => r[3] === "Pengeluaran");
+  const pengeluaran = data.filter(r => {
+    if (!r[0]) return false;
+    const parts = r[0].split("/");
+    return r[5] === "Pengeluaran" &&
+      parseInt(parts[1]) === bulanIni &&
+      parseInt(parts[2]) === tahunIni;
+  });
 
   if (pengeluaran.length === 0) {
-    return bot.sendMessage(chatId, `📊 Belum ada pengeluaran di ${bulanIni} ${tahunIni}.`);
+    return bot.sendMessage(chatId, `📊 Belum ada pengeluaran di ${getBulanIni()} ini.`);
   }
 
-  // Hitung per kategori
   const kategori = {};
   for (const r of pengeluaran) {
-    const kat = r[2] || "Lainnya";
-    kategori[kat] = (kategori[kat] || 0) + parseJumlah(r[4]);
+    const kat = r[4] || "Lainnya";
+    kategori[kat] = (kategori[kat] || 0) + parseJumlah(r[6]);
   }
 
   const labels = Object.keys(kategori);
   const values = Object.values(kategori);
   const total = values.reduce((a, b) => a + b, 0);
-
-  // Warna untuk tiap slice
-  const warna = [
-    "#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0",
-    "#9966FF", "#FF9F40", "#E7E9ED", "#71B37C"
-  ];
+  const warna = ["#FF6384","#36A2EB","#FFCE56","#4BC0C0","#9966FF","#FF9F40","#E7E9ED","#71B37C"];
 
   const chartConfig = {
     type: "pie",
     data: {
       labels: labels.map((l, i) => `${l} (${Math.round(values[i] / total * 100)}%)`),
-      datasets: [{
-        data: values,
-        backgroundColor: warna.slice(0, labels.length),
-      }]
+      datasets: [{ data: values, backgroundColor: warna.slice(0, labels.length) }]
     },
     options: {
-      title: {
-        display: true,
-        text: `Pengeluaran ${bulanIni} ${tahunIni}`,
-        fontSize: 16,
-      },
+      title: { display: true, text: `Pengeluaran ${getBulanIni()}`, fontSize: 16 },
       legend: { position: "bottom" }
     }
   };
 
   const url = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}&w=500&h=400&bkg=white`;
-
   await bot.sendPhoto(chatId, url, {
-    caption: `🥧 *Pengeluaran ${bulanIni} ${tahunIni} per Kategori*\nTotal: ${formatRupiah(total)}`,
+    caption: `🥧 *Pengeluaran ${getBulanIni()} per Kategori*\nTotal: ${formatRupiah(total)}`,
     parse_mode: "Markdown"
   });
 }
@@ -424,30 +424,31 @@ async function handleGrafikKategori(chatId) {
 async function handleGrafikMingguan(chatId) {
   bot.sendChatAction(chatId, "upload_photo");
   const rows = await ambilSemuaData();
-  const data = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
+  const data = rows.filter(r => isValid(r));
 
   const sekarang = new Date();
-  const bulanIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", month: "long" });
-  const tahunIni = sekarang.toLocaleString("id-ID", { timeZone: "Asia/Jakarta", year: "numeric" });
+  const bulanIni = sekarang.getMonth() + 1;
+  const tahunIni = sekarang.getFullYear();
 
-  const dataBulan = data.filter(r => r[0] && r[0].includes(bulanIni) && r[0].includes(tahunIni));
+  const dataBulan = data.filter(r => {
+    if (!r[0]) return false;
+    const parts = r[0].split("/");
+    return parseInt(parts[1]) === bulanIni && parseInt(parts[2]) === tahunIni;
+  });
 
   if (dataBulan.length === 0) {
-    return bot.sendMessage(chatId, `📊 Belum ada transaksi di ${bulanIni} ${tahunIni}.`);
+    return bot.sendMessage(chatId, `📊 Belum ada transaksi di ${getBulanIni()} ini.`);
   }
 
-  // Kelompokkan per minggu (Minggu 1-5)
-  const minggu = { "Minggu 1": [0,0], "Minggu 2": [0,0], "Minggu 3": [0,0], "Minggu 4": [0,0] };
+  const minggu = {
+    "Minggu 1": [0, 0], "Minggu 2": [0, 0],
+    "Minggu 3": [0, 0], "Minggu 4": [0, 0]
+  };
 
   for (const r of dataBulan) {
-    if (!r[0]) continue;
-    // Ambil tanggal dari format "Kamis, 28 Mei 2026 pukul 18.57"
-    const matches = r[0].match(/(\d+)\s+\w+\s+\d{4}/);
-    if (!matches) continue;
-    const tgl = parseInt(matches[0]);
-    const jumlah = parseJumlah(r[4]);
-    const tipe = r[3];
-
+    const tgl = parseInt(r[0].split("/")[0]);
+    const jumlah = parseJumlah(r[6]);
+    const tipe = r[5];
     let mgg;
     if (tgl <= 7) mgg = "Minggu 1";
     else if (tgl <= 14) mgg = "Minggu 2";
@@ -459,79 +460,27 @@ async function handleGrafikMingguan(chatId) {
   }
 
   const labels = Object.keys(minggu);
-  const pemasukan = labels.map(m => minggu[m][0]);
-  const pengeluaran = labels.map(m => minggu[m][1]);
-
   const chartConfig = {
     type: "bar",
     data: {
       labels,
       datasets: [
-        {
-          label: "Pemasukan",
-          data: pemasukan,
-          backgroundColor: "#4BC0C0",
-        },
-        {
-          label: "Pengeluaran",
-          data: pengeluaran,
-          backgroundColor: "#FF6384",
-        }
+        { label: "Pemasukan", data: labels.map(m => minggu[m][0]), backgroundColor: "#4BC0C0" },
+        { label: "Pengeluaran", data: labels.map(m => minggu[m][1]), backgroundColor: "#FF6384" }
       ]
     },
     options: {
-      title: {
-        display: true,
-        text: `Pemasukan vs Pengeluaran ${bulanIni} ${tahunIni}`,
-        fontSize: 16,
-      },
-      scales: {
-        yAxes: [{ ticks: { beginAtZero: true } }]
-      },
+      title: { display: true, text: `Pemasukan vs Pengeluaran ${getBulanIni()}`, fontSize: 16 },
+      scales: { yAxes: [{ ticks: { beginAtZero: true } }] },
       legend: { position: "bottom" }
     }
   };
 
   const url = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}&w=500&h=400&bkg=white`;
-
   await bot.sendPhoto(chatId, url, {
-    caption: `📊 *Pemasukan vs Pengeluaran per Minggu*\n${bulanIni} ${tahunIni}`,
+    caption: `📊 *Pemasukan vs Pengeluaran per Minggu*\n${getBulanIni()}`,
     parse_mode: "Markdown"
   });
-}
-
-async function handleDebug(chatId) {
-  const rows = await ambilSemuaData();
-  
-  if (rows.length === 0) {
-    return bot.sendMessage(chatId, "Sheets kosong, tidak ada data sama sekali.");
-  }
-
-  // Tampilkan 3 baris pertama data mentah
-  let pesan = `🔍 *Debug Data*\n\nTotal baris: ${rows.length}\n\n`;
-  
-  const sample = rows.slice(0, 3);
-  for (let i = 0; i < sample.length; i++) {
-    const r = sample[i];
-    pesan += `*Baris ${i + 1}:*\n`;
-    pesan += `A: \`${r[0]}\`\n`;
-    pesan += `B: \`${r[1]}\`\n`;
-    pesan += `C: \`${r[2]}\`\n`;
-    pesan += `D: \`${r[3]}\`\n`;
-    pesan += `E: \`${r[4]}\`\n`;
-    pesan += `F: \`${r[5]}\`\n\n`;
-  }
-
-  // Cek filter
-  const filtered = rows.filter(r => r[3] && (r[3] === "Pemasukan" || r[3] === "Pengeluaran"));
-  pesan += `Filter hasil: ${filtered.length} baris lolos\n`;
-
-  if (filtered[0]) {
-    const jumlah = parseFloat(filtered[0][4]);
-    pesan += `Jumlah baris pertama: \`${filtered[0][4]}\` → parsed: \`${jumlah}\``;
-  }
-
-  bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
 }
 
 // ============================================================
@@ -546,12 +495,11 @@ bot.on("message", async (msg) => {
 
   if (teks === "/start" || teks === "/help") return handleStart(chatId);
   if (teks === "/saldo") return handleSaldo(chatId);
-  if (teks === "/debug") return handleDebug(chatId);
   if (teks === "/laporan") return handleLaporan(chatId);
-  if (teks === "/hapus") return handleHapus(chatId);
   if (teks === "/riwayat") return handleRiwayat(chatId);
   if (teks === "/grafik") return handleGrafikKategori(chatId);
   if (teks === "/grafikmingguan") return handleGrafikMingguan(chatId);
+  if (teks === "/hapus") return handleHapus(chatId);
 
   bot.sendChatAction(chatId, "typing");
 
@@ -583,4 +531,4 @@ bot.on("message", async (msg) => {
   }
 });
 
-console.log("🤖 Bot keuangan v3 aktif — dengan kolom dompet & format tanggal baru!");
+console.log("🤖 Bot keuangan v4 aktif!");
