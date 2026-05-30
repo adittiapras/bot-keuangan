@@ -7,7 +7,7 @@ const { google } = require("googleapis");
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const SHEET_NAME = "Sheet1";
+const SHEET_NAME = "Catatan";
 // ============================================================
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
