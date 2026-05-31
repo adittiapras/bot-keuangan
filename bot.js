@@ -22,7 +22,7 @@ const PROMPT_TEMPLATE = `Kamu adalah AI parser transaksi keuangan. User mengirim
 
 Tugasmu: ekstrak informasi dan balas HANYA dengan JSON valid berikut (tanpa markdown, tanpa teks tambahan apapun):
 
-{"tipe":"pengeluaran"|"pemasukan","kategori":"string","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"1 emoji relevan","dompet":"string","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
+{"tipe":"pengeluaran"|"pemasukan"|"transfer","kategori":"string","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"1 emoji relevan","dompet":"string","dompet_tujuan":"string","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
 
 Panduan kategori:
 - Pengeluaran: Makanan, Transport, Belanja, Kesehatan, Hiburan, Tagihan, Lainnya
@@ -32,6 +32,13 @@ Panduan dompet:
 - Jika user menyebut "cash", "tunai", "dompet" → isi "Cash"
 - Jika user menyebut nama bank atau e-wallet (BCA, BSI, BRI, BNI, Mandiri, GoPay, OVO, Dana, ShopeePay, dll) → isi nama tersebut
 - Jika tidak disebutkan sama sekali → isi "Cash"
+
+Panduan transfer:
+- Jika user menyebut transfer/pindah uang dari satu dompet ke dompet lain → tipe "transfer"
+- "dompet" = dompet asal (yang berkurang)
+- "dompet_tujuan" = dompet tujuan (yang bertambah)
+- Untuk transaksi biasa (bukan transfer), "dompet_tujuan" = ""
+- Contoh: "transfer bsi ke seabank 2jt" → dompet="BSI", dompet_tujuan="Seabank", tipe="transfer"
 
 Aturan jumlah:
 - rb / ribu = x1.000 (contoh: 25rb = 25000)
@@ -115,22 +122,45 @@ async function ambilSemuaData() {
 
 async function simpanKeSheets(data) {
   const { tanggal, jam, hari } = getTanggalParts();
+
+  let rows;
+
+  if (data.tipe === "transfer") {
+    // Catat 2 baris: keluar dari dompet asal, masuk ke dompet tujuan
+    rows = [
+      [
+        tanggal, jam, hari,
+        `Transfer ke ${data.dompet_tujuan}`,
+        "Transfer",
+        "Transfer Keluar",
+        data.jumlah,
+        data.dompet,
+      ],
+      [
+        tanggal, jam, hari,
+        `Transfer dari ${data.dompet}`,
+        "Transfer",
+        "Transfer Masuk",
+        data.jumlah,
+        data.dompet_tujuan,
+      ]
+    ];
+  } else {
+    rows = [[
+      tanggal, jam, hari,
+      data.deskripsi,
+      data.kategori,
+      data.tipe.charAt(0).toUpperCase() + data.tipe.slice(1),
+      data.jumlah,
+      data.dompet || "Cash",
+    ]];
+  }
+
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
     range: `${SHEET_NAME}!A:H`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [[
-        tanggal,
-        jam,
-        hari,
-        data.deskripsi,
-        data.kategori,
-        data.tipe.charAt(0).toUpperCase() + data.tipe.slice(1),
-        data.jumlah,
-        data.dompet || "Cash",
-      ]],
-    },
+    valueInputOption: "RAW",
+    requestBody: { values: rows },
   });
 }
 
@@ -509,13 +539,22 @@ bot.on("message", async (msg) => {
     const parsed = JSON.parse(clean);
 
     if (parsed.error) {
-      return bot.sendMessage(chatId, parsed.balasan);
-    }
+  return bot.sendMessage(chatId, parsed.balasan);
+}
 
-    await simpanKeSheets(parsed);
+await simpanKeSheets(parsed);
 
+let balasan;
+if (parsed.tipe === "transfer") {
+  balasan =
+    `🔄 *Transfer Tercatat!*\n\n` +
+    `👛 Dari: ${parsed.dompet}\n` +
+    `👛 Ke: ${parsed.dompet_tujuan}\n` +
+    `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n\n` +
+    `_${parsed.balasan}_`;
+  } else {
     const tipeIcon = parsed.tipe === "pemasukan" ? "💰" : "💸";
-    const balasan =
+    balasan =
       `${tipeIcon} *Tercatat!*\n\n` +
       `${parsed.emoji} ${parsed.deskripsi}\n` +
       `📁 Kategori: ${parsed.kategori}\n` +
@@ -523,8 +562,9 @@ bot.on("message", async (msg) => {
       `👛 Dompet: ${parsed.dompet || "Cash"}\n` +
       `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n\n` +
       `_${parsed.balasan}_`;
-
-    bot.sendMessage(chatId, balasan, { parse_mode: "Markdown" });
+  }
+  
+  bot.sendMessage(chatId, balasan, { parse_mode: "Markdown" });
   } catch (err) {
     console.error("Error:", err.message);
     bot.sendMessage(chatId, "Maaf, ada kendala teknis. Coba kirim ulang ya! 🙏");
