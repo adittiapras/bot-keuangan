@@ -50,28 +50,42 @@ Aturan jumlah:
 - Angka tanpa satuan = nilai aslinya (contoh: 50000 = 50000)
 
 Jika pesan tidak ada hubungannya dengan transaksi keuangan, balas dengan:
-{"error":"bukan transaksi","balasan":"Halo! Kirim transaksi kamu ya, contoh: makan siang 25rb atau gaji masuk 3jt 😊"}
-
-Pesan user: `;
+{"error":"bukan transaksi","balasan":"Halo! Kirim transaksi kamu ya, contoh: makan siang 25rb atau gaji masuk 3jt 😊"}`;
 
 // ============================================================
 // HELPER FUNCTIONS
 // ============================================================
 
-async function tanyaGemini(teks) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+async function tanyaAI(teks) {
+  const url = `https://api.groq.com/openai/v1/chat/completions`;
   const body = {
-    contents: [{ parts: [{ text: PROMPT_TEMPLATE + teks }] }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
+    model: "llama-3.1-8b-instant",
+    messages: [
+      {
+        role: "system",
+        content: PROMPT_TEMPLATE.replace("Pesan user: ", "")
+      },
+      {
+        role: "user",
+        content: teks
+      }
+    ],
+    temperature: 0.1,
+    max_tokens: 300
   };
+
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.GROQ_API_KEY}`
+    },
     body: JSON.stringify(body)
   });
+
   const data = await res.json();
-  if (!res.ok) throw new Error(`Gemini error ${res.status}: ${JSON.stringify(data)}`);
-  return data.candidates[0].content.parts[0].text;
+  if (!res.ok) throw new Error(`Groq error ${res.status}: ${JSON.stringify(data)}`);
+  return data.choices[0].message.content;
 }
 
 function getTanggalParts() {
@@ -546,7 +560,7 @@ bot.on("message", async (msg) => {
   bot.sendChatAction(chatId, "typing");
 
   try {
-    const raw = await tanyaGemini(teks);
+    const raw = await tanyaAI(teks);
     const clean = raw.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(clean);
 
