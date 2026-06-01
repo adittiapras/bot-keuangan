@@ -59,7 +59,7 @@ Jika pesan tidak ada hubungannya dengan transaksi keuangan, balas dengan:
 async function tanyaAI(teks) {
   const url = `https://api.groq.com/openai/v1/chat/completions`;
   const body = {
-    model: "llama-3.1-8b-instant",
+    model: "llama-3.3-70b-versatile",
     messages: [
       {
         role: "system",
