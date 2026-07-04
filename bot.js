@@ -21,39 +21,46 @@ const PROMPT_TEMPLATE = `Kamu adalah AI parser transaksi keuangan. User mengirim
 
 Tugasmu: ekstrak informasi dan balas HANYA dengan JSON valid berikut (tanpa markdown, tanpa teks tambahan apapun):
 
-Untuk transaksi biasa:
-{"tipe":"pengeluaran"|"pemasukan","kategori":"string","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"1 emoji relevan","dompet":"string","dompet_tujuan":"","tanggal":"string|null","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
+Untuk pengeluaran biasa:
+{"tipe":"pengeluaran","kategori":"string","label":"Kebutuhan"|"Keinginan","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"1 emoji relevan","dompet":"string","dompet_tujuan":"","tanggal":"string|null","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
+
+Untuk pemasukan:
+{"tipe":"pemasukan","kategori":"string","label":"","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"1 emoji relevan","dompet":"string","dompet_tujuan":"","tanggal":"string|null","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
+
+Untuk tabungan (kata kunci: nabung, menabung, saving, sisihkan):
+{"tipe":"tabungan","kategori":"Tabungan","label":"Tabungan","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"🏦","dompet":"string","dompet_tujuan":"","tanggal":"string|null","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
+
+Untuk investasi (kata kunci: invest, investasi, deposito, reksadana, saham):
+{"tipe":"investasi","kategori":"Investasi","label":"Investasi","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"📈","dompet":"string","dompet_tujuan":"","tanggal":"string|null","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
 
 Untuk transfer antar dompet:
-{"tipe":"transfer","kategori":"Transfer","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"🔄","dompet":"string nama dompet asal","dompet_tujuan":"string nama dompet tujuan","tanggal":"string|null","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
+{"tipe":"transfer","kategori":"Transfer","label":"","jumlah":angka_numerik,"deskripsi":"string singkat","emoji":"🔄","dompet":"string nama dompet asal","dompet_tujuan":"string nama dompet tujuan","tanggal":"string|null","balasan":"string respons singkat ramah dalam bahasa Indonesia"}
 
-Panduan kategori transaksi biasa:
-- Pengeluaran: Makanan, Transport, Belanja, Kesehatan, Hiburan, Tagihan, Lainnya
-- Pemasukan: Gaji, Bisnis, Transfer, Investasi, Lainnya
+Panduan kategori pengeluaran:
+- Makanan, Transport, Belanja, Kesehatan, Hiburan, Tagihan, Lainnya
+
+Panduan label pengeluaran (AI tebak dulu, user bisa koreksi):
+- Kebutuhan: makan pokok, transport kerja, tagihan, kesehatan, kebutuhan rumah
+- Keinginan: makan di restoran/kafe, hiburan, belanja non-esensial, hobi
 
 Panduan dompet:
-- Jika user menyebut "cash", "tunai", "dompet" → isi "Cash"
-- Jika user menyebut nama bank atau e-wallet (BCA, BSI, BRI, BNI, Mandiri, GoPay, OVO, Dana, ShopeePay, Seabank, Jago, Krom, dll) → isi nama tersebut
-- Jika tidak disebutkan sama sekali → isi "Cash"
-
-Panduan transfer:
-- Jika user menyebut transfer/pindah/alokasi uang dari satu dompet ke dompet lain → tipe "transfer"
-- "dompet" = dompet asal, "dompet_tujuan" = dompet tujuan
-- Untuk transaksi biasa → "dompet_tujuan" = ""
+- "cash", "tunai" → "Cash"
+- Nama bank/e-wallet (BCA, BSI, BRI, BNI, Mandiri, GoPay, OVO, Dana, ShopeePay, Seabank, Jago, Krom, Flip, dll) → isi nama tersebut
+- Tidak disebutkan → "Cash"
 
 Panduan tanggal:
-- Jika user menyebut tanggal spesifik → isi "tanggal" dengan format DD/MM/YYYY
-- Jika user menyebut "kemarin" → isi "tanggal" dengan "kemarin"
-- Jika user menyebut "2 hari lalu", "3 hari lalu" dst → isi "tanggal" dengan "X hari lalu" (X = angkanya)
-- Jika tidak ada info tanggal → isi "tanggal" dengan null
+- Tanggal spesifik → format DD/MM/YYYY
+- "kemarin" → "kemarin"
+- "X hari lalu" → "X hari lalu"
+- Tidak ada info tanggal → null
 
 Aturan jumlah:
-- rb / ribu = x1.000
-- jt / juta = x1.000.000
+- rb/ribu = x1.000
+- jt/juta = x1.000.000
 - k = x1.000
 - Angka tanpa satuan = nilai aslinya
 
-Jika pesan tidak ada hubungannya dengan transaksi keuangan, balas dengan:
+Jika pesan tidak ada hubungannya dengan transaksi keuangan:
 {"error":"bukan transaksi","balasan":"Halo! Kirim transaksi kamu ya, contoh: makan siang 25rb atau gaji masuk 3jt 😊"}`;
 
 // ============================================================
@@ -86,10 +93,8 @@ async function tanyaAI(teks) {
   return data.choices[0].message.content;
 }
 
-// Hitung tanggal dari input AI
 function hitungTanggal(tanggalStr) {
   const sekarang = new Date();
-  const tz = { timeZone: "Asia/Jakarta" };
 
   if (!tanggalStr) return sekarang;
 
@@ -99,7 +104,6 @@ function hitungTanggal(tanggalStr) {
     return kemarin;
   }
 
-  // "X hari lalu"
   const hariLaluMatch = tanggalStr.match(/(\d+)\s*hari\s*lalu/i);
   if (hariLaluMatch) {
     const xHariLalu = new Date(sekarang);
@@ -107,13 +111,11 @@ function hitungTanggal(tanggalStr) {
     return xHariLalu;
   }
 
-  // Format DD/MM/YYYY
   const formatMatch = tanggalStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (formatMatch) {
     return new Date(`${formatMatch[3]}-${formatMatch[2]}-${formatMatch[1]}`);
   }
 
-  // Format "28 juni" atau "28 juni 2026"
   const bulanMap = {
     januari: 0, februari: 1, maret: 2, april: 3, mei: 4, juni: 5,
     juli: 6, agustus: 7, september: 8, oktober: 9, november: 10, desember: 11
@@ -123,15 +125,12 @@ function hitungTanggal(tanggalStr) {
     const tgl = parseInt(tglBulanMatch[1]);
     const bulan = bulanMap[tglBulanMatch[2].toLowerCase()];
     const tahun = tglBulanMatch[3] ? parseInt(tglBulanMatch[3]) : sekarang.getFullYear();
-    if (bulan !== undefined) {
-      return new Date(tahun, bulan, tgl);
-    }
+    if (bulan !== undefined) return new Date(tahun, bulan, tgl);
   }
 
   return sekarang;
 }
 
-// Dapatkan nama sheet bulan dari tanggal
 function getNamaSheet(tanggal) {
   return tanggal.toLocaleString("id-ID", {
     timeZone: "Asia/Jakarta",
@@ -140,7 +139,6 @@ function getNamaSheet(tanggal) {
   });
 }
 
-// Dapatkan bagian tanggal
 function getTanggalParts(tanggal) {
   const tgl = tanggal.toLocaleDateString("id-ID", {
     timeZone: "Asia/Jakarta",
@@ -177,14 +175,13 @@ function parseJumlah(str) {
 }
 
 function isValid(r) {
-  return r[5] && ["Pemasukan", "Pengeluaran", "Transfer Masuk", "Transfer Keluar"].includes(r[5]);
+  return r[6] && ["Pemasukan", "Pengeluaran", "Transfer Masuk", "Transfer Keluar", "Tabungan", "Investasi"].includes(r[6]);
 }
 
 function isTransfer(r) {
-  return r[5] === "Transfer Masuk" || r[5] === "Transfer Keluar";
+  return r[6] === "Transfer Masuk" || r[6] === "Transfer Keluar";
 }
 
-// Cek dan buat sheet bulan kalau belum ada
 async function pastikanSheetAda(namaSheet) {
   const spreadsheet = await sheets.spreadsheets.get({
     spreadsheetId: SPREADSHEET_ID
@@ -195,25 +192,21 @@ async function pastikanSheetAda(namaSheet) {
   );
 
   if (!sheetSudahAda) {
-    // Buat sheet baru
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId: SPREADSHEET_ID,
       requestBody: {
         requests: [{
-          addSheet: {
-            properties: { title: namaSheet }
-          }
+          addSheet: { properties: { title: namaSheet } }
         }]
       }
     });
 
-    // Tambah header
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
-      range: `'${namaSheet}'!A1:I1`,
+      range: `'${namaSheet}'!A1:J1`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [["Tanggal", "Jam", "Hari", "Deskripsi", "Kategori", "Tipe", "Jumlah", "Dompet", "Transfer ID"]]
+        values: [["Tanggal", "Jam", "Hari", "Deskripsi", "Kategori", "Label", "Tipe", "Jumlah", "Dompet", "Transfer ID"]]
       }
     });
 
@@ -224,29 +217,31 @@ async function pastikanSheetAda(namaSheet) {
 async function ambilSemuaData(namaSheet) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `'${namaSheet}'!A:I`,
+    range: `'${namaSheet}'!A:J`,
   });
   return res.data.values || [];
 }
 
-async function simpanKeSheets(data, tanggal) {
+async function simpanKeSheets(data, tanggal, labelOverride) {
   const namaSheet = getNamaSheet(tanggal);
   await pastikanSheetAda(namaSheet);
 
   const { tanggal: tgl, jam, hari } = getTanggalParts(tanggal);
+  const label = labelOverride || data.label || "";
 
   let rows;
   if (data.tipe === "transfer") {
     const transferId = Date.now().toString();
     rows = [
-      [tgl, jam, hari, `Transfer ke ${data.dompet_tujuan}`, "Transfer", "Transfer Keluar", data.jumlah, data.dompet, transferId],
-      [tgl, jam, hari, `Transfer dari ${data.dompet}`, "Transfer", "Transfer Masuk", data.jumlah, data.dompet_tujuan, transferId],
+      [tgl, jam, hari, `Transfer ke ${data.dompet_tujuan}`, "Transfer", "", "Transfer Keluar", data.jumlah, data.dompet, transferId],
+      [tgl, jam, hari, `Transfer dari ${data.dompet}`, "Transfer", "", "Transfer Masuk", data.jumlah, data.dompet_tujuan, transferId],
     ];
   } else {
     rows = [[
       tgl, jam, hari,
       data.deskripsi,
       data.kategori,
+      label,
       data.tipe.charAt(0).toUpperCase() + data.tipe.slice(1),
       data.jumlah,
       data.dompet || "Cash",
@@ -256,7 +251,7 @@ async function simpanKeSheets(data, tanggal) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `'${namaSheet}'!A:I`,
+    range: `'${namaSheet}'!A:J`,
     valueInputOption: "RAW",
     requestBody: { values: rows },
   });
@@ -264,6 +259,8 @@ async function simpanKeSheets(data, tanggal) {
   return namaSheet;
 }
 
+// Simpan transaksi pending untuk konfirmasi label
+const labelPending = {};
 const hapusPending = {};
 
 // ============================================================
@@ -278,8 +275,9 @@ async function handleStart(chatId) {
     `💸 bensin 50rb pakai BCA\n` +
     `💰 gaji masuk 3jt ke BSI\n` +
     `🔄 transfer BSI ke Seabank 1jt\n` +
-    `📅 makan siang 25rb kemarin\n` +
-    `📅 bensin 50rb 28 juni\n\n` +
+    `🏦 nabung 500rb Seabank\n` +
+    `📈 invest 300rb reksa dana\n` +
+    `📅 makan siang 25rb kemarin\n\n` +
     `📊 *Command tersedia:*\n` +
     `/saldo — cek saldo & ringkasan hari ini\n` +
     `/laporan — laporan lengkap bulan ini\n` +
@@ -298,7 +296,7 @@ async function handleSaldo(chatId) {
   try {
     await pastikanSheetAda(namaSheet);
     const rows = await ambilSemuaData(namaSheet);
-    const data = rows.filter(r => r[5] === "Pemasukan" || r[5] === "Pengeluaran");
+    const data = rows.filter(r => r[6] === "Pemasukan" || r[6] === "Pengeluaran");
 
     let totalMasuk = 0, totalKeluar = 0;
     let hariIniMasuk = 0, hariIniKeluar = 0;
@@ -309,8 +307,8 @@ async function handleSaldo(chatId) {
     });
 
     for (const r of data) {
-      const jumlah = parseJumlah(r[6]);
-      const tipe = r[5];
+      const jumlah = parseJumlah(r[7]);
+      const tipe = r[6];
       const isHariIni = r[0] === hariIniStr;
 
       if (tipe === "Pemasukan") {
@@ -350,26 +348,26 @@ async function handleLaporan(chatId) {
   try {
     await pastikanSheetAda(namaSheet);
     const rows = await ambilSemuaData(namaSheet);
-    const data = rows.filter(r => r[5] === "Pemasukan" || r[5] === "Pengeluaran");
 
-    if (data.length === 0) {
-      return bot.sendMessage(chatId, `📊 Belum ada transaksi di ${namaSheet} ini.`);
-    }
+    const pengeluaran = rows.filter(r => r[6] === "Pengeluaran");
+    const pemasukan = rows.filter(r => r[6] === "Pemasukan");
+    const tabungan = rows.filter(r => r[6] === "Tabungan");
+    const investasi = rows.filter(r => r[6] === "Investasi");
 
+    const totalMasuk = pemasukan.reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const totalKeluar = pengeluaran.reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const totalTabungan = tabungan.reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const totalInvestasi = investasi.reduce((a, r) => a + parseJumlah(r[7]), 0);
+
+    // Hitung per label
+    const totalKebutuhan = pengeluaran.filter(r => r[5] === "Kebutuhan").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const totalKeinginan = pengeluaran.filter(r => r[5] === "Keinginan").reduce((a, r) => a + parseJumlah(r[7]), 0);
+
+    // Hitung per kategori
     const kategoriKeluar = {};
-    let totalMasuk = 0, totalKeluar = 0;
-
-    for (const r of data) {
-      const jumlah = parseJumlah(r[6]);
-      const tipe = r[5];
-      const kategori = r[4] || "Lainnya";
-
-      if (tipe === "Pemasukan") {
-        totalMasuk += jumlah;
-      } else {
-        totalKeluar += jumlah;
-        kategoriKeluar[kategori] = (kategoriKeluar[kategori] || 0) + jumlah;
-      }
+    for (const r of pengeluaran) {
+      const kat = `${r[4]} (${r[5] || "-"})`;
+      kategoriKeluar[kat] = (kategoriKeluar[kat] || 0) + parseJumlah(r[7]);
     }
 
     const kategoriUrut = Object.entries(kategoriKeluar).sort((a, b) => b[1] - a[1]);
@@ -379,16 +377,26 @@ async function handleLaporan(chatId) {
       rincianKategori += `  • ${kat}: ${formatRupiah(jml)} (${persen}%)\n`;
     }
 
-    const saldo = totalMasuk - totalKeluar;
+    const saldo = totalMasuk - totalKeluar - totalTabungan - totalInvestasi;
     const saldoIcon = saldo >= 0 ? "🟢" : "🔴";
+
+    const pKebutuhan = totalMasuk > 0 ? Math.round(totalKebutuhan / totalMasuk * 100) : 0;
+    const pKeinginan = totalMasuk > 0 ? Math.round(totalKeinginan / totalMasuk * 100) : 0;
+    const pTabungan = totalMasuk > 0 ? Math.round((totalTabungan + totalInvestasi) / totalMasuk * 100) : 0;
 
     const pesan =
       `📊 *Laporan ${namaSheet}*\n\n` +
-      `⬆️ Total pemasukan: ${formatRupiah(totalMasuk)}\n` +
-      `⬇️ Total pengeluaran: ${formatRupiah(totalKeluar)}\n` +
-      `${saldoIcon} Selisih: ${formatRupiah(saldo)}\n\n` +
+      `⬆️ Pemasukan: ${formatRupiah(totalMasuk)}\n` +
+      `⬇️ Pengeluaran: ${formatRupiah(totalKeluar)}\n` +
+      `🏦 Tabungan: ${formatRupiah(totalTabungan)}\n` +
+      `📈 Investasi: ${formatRupiah(totalInvestasi)}\n` +
+      `${saldoIcon} Sisa: ${formatRupiah(saldo)}\n\n` +
+      `🎯 *Alokasi dari Pemasukan:*\n` +
+      `  🔵 Kebutuhan: ${formatRupiah(totalKebutuhan)} (${pKebutuhan}%)\n` +
+      `  🟡 Keinginan: ${formatRupiah(totalKeinginan)} (${pKeinginan}%)\n` +
+      `  🟢 Tabungan+Invest: ${formatRupiah(totalTabungan + totalInvestasi)} (${pTabungan}%)\n\n` +
       `🗂 *Rincian pengeluaran:*\n${rincianKategori}\n` +
-      `📝 Total transaksi: ${data.length}`;
+      `📝 Total transaksi: ${rows.filter(r => isValid(r)).length}`;
 
     bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
   } catch (err) {
@@ -414,12 +422,16 @@ async function handleRiwayat(chatId) {
 
     let pesan = `🕐 *10 Transaksi Terakhir — ${namaSheet}*\n\n`;
     for (const r of sepuluhTerakhir) {
-      const tipe = r[5];
-      const icon = tipe === "Pemasukan" ? "⬆️" : tipe === "Transfer Masuk" || tipe === "Transfer Keluar" ? "🔄" : "⬇️";
-      const jumlah = parseJumlah(r[6]);
-      const dompet = r[7] || "Cash";
+      const tipe = r[6];
+      const icon = tipe === "Pemasukan" ? "⬆️" :
+        tipe === "Transfer Masuk" || tipe === "Transfer Keluar" ? "🔄" :
+        tipe === "Tabungan" ? "🏦" :
+        tipe === "Investasi" ? "📈" : "⬇️";
+      const jumlah = parseJumlah(r[7]);
+      const dompet = r[8] || "Cash";
+      const label = r[5] ? ` • 🏷️ ${r[5]}` : "";
       pesan += `${icon} *${r[3]}*\n`;
-      pesan += `    💵 ${formatRupiah(jumlah)} • 📁 ${r[4]} • 👛 ${dompet}\n`;
+      pesan += `    💵 ${formatRupiah(jumlah)} • 📁 ${r[4]}${label} • 👛 ${dompet}\n`;
       pesan += `    🕐 ${r[0]} ${r[1]} (${r[2]})\n\n`;
     }
 
@@ -453,18 +465,19 @@ async function handleHapus(chatId) {
     const isTransferRow = isTransfer(lastRow);
     let pesanExtra = "";
     if (isTransferRow) {
-      const transferId = lastRow[8];
-      const pasangan = rows.find((r, i) => i !== lastRowIndex && r[8] === transferId);
+      const transferId = lastRow[9];
+      const pasangan = rows.find((r, i) => i !== lastRowIndex && r[9] === transferId);
       if (pasangan) pesanExtra = `\n⚠️ _Ini adalah transfer — baris pasangannya juga akan ikut dihapus_`;
     }
 
+    const label = lastRow[5] ? ` • 🏷️ ${lastRow[5]}` : "";
     const pesan =
       `🗑 *Hapus transaksi ini?*\n\n` +
       `📅 ${lastRow[0]} ${lastRow[1]} (${lastRow[2]})\n` +
       `📝 ${lastRow[3]}\n` +
-      `📁 ${lastRow[4]}\n` +
-      `👛 ${lastRow[7] || "Cash"}\n` +
-      `💵 ${formatRupiah(parseJumlah(lastRow[6]))}` +
+      `📁 ${lastRow[4]}${label}\n` +
+      `👛 ${lastRow[8] || "Cash"}\n` +
+      `💵 ${formatRupiah(parseJumlah(lastRow[7]))}` +
       pesanExtra;
 
     bot.sendMessage(chatId, pesan, {
@@ -485,8 +498,41 @@ async function handleHapus(chatId) {
 bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const messageId = query.message.message_id;
+  const data = query.data;
 
-  if (query.data === "hapus_ya") {
+  // Handle konfirmasi label
+  if (data === "label_kebutuhan" || data === "label_keinginan") {
+    const pending = labelPending[chatId];
+    if (!pending) {
+      bot.answerCallbackQuery(query.id);
+      return bot.editMessageText("⚠️ Sesi sudah kedaluwarsa, coba input ulang transaksinya.", {
+        chat_id: chatId, message_id: messageId
+      });
+    }
+
+    const label = data === "label_kebutuhan" ? "Kebutuhan" : "Keinginan";
+    const { parsed, tanggal, namaSheet } = pending;
+
+    await simpanKeSheets(parsed, tanggal, label);
+    delete labelPending[chatId];
+
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText(
+      `💸 *Tercatat sebagai ${label}!*\n\n` +
+      `${parsed.emoji} ${parsed.deskripsi}\n` +
+      `📁 Kategori: ${parsed.kategori}\n` +
+      `🏷️ Label: ${label}\n` +
+      `👛 Dompet: ${parsed.dompet || "Cash"}\n` +
+      `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n` +
+      `📅 Dicatat ke: ${namaSheet}\n\n` +
+      `_${parsed.balasan}_`,
+      { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
+    );
+    return;
+  }
+
+  // Handle konfirmasi hapus
+  if (data === "hapus_ya") {
     const pending = hapusPending[chatId];
 
     if (!pending) {
@@ -501,10 +547,10 @@ bot.on("callback_query", async (query) => {
     const lastRow = rows[lastRowIndex];
 
     let indexToDelete = [lastRowIndex];
-    if (isTransfer(lastRow) && lastRow[8]) {
-      const transferId = lastRow[8];
+    if (isTransfer(lastRow) && lastRow[9]) {
+      const transferId = lastRow[9];
       rows.forEach((r, i) => {
-        if (i !== lastRowIndex && r[8] === transferId) indexToDelete.push(i);
+        if (i !== lastRowIndex && r[9] === transferId) indexToDelete.push(i);
       });
     }
 
@@ -512,7 +558,7 @@ bot.on("callback_query", async (query) => {
     for (const idx of indexToDelete) {
       await sheets.spreadsheets.values.clear({
         spreadsheetId: SPREADSHEET_ID,
-        range: `'${namaSheet}'!A${idx + 1}:I${idx + 1}`,
+        range: `'${namaSheet}'!A${idx + 1}:J${idx + 1}`,
       });
     }
 
@@ -521,12 +567,12 @@ bot.on("callback_query", async (query) => {
     bot.editMessageText(
       `✅ *Transaksi berhasil dihapus!*\n\n` +
       `📝 ${lastRow[3]}\n` +
-      `💵 ${formatRupiah(parseJumlah(lastRow[6]))}` +
+      `💵 ${formatRupiah(parseJumlah(lastRow[7]))}` +
       (indexToDelete.length > 1 ? `\n_Baris pasangan transfer ikut dihapus_` : ""),
       { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
     );
 
-  } else if (query.data === "hapus_tidak") {
+  } else if (data === "hapus_tidak") {
     delete hapusPending[chatId];
     bot.answerCallbackQuery(query.id);
     bot.editMessageText("👍 Oke, transaksi tidak jadi dihapus.", {
@@ -542,7 +588,7 @@ async function handleGrafikKategori(chatId) {
   try {
     await pastikanSheetAda(namaSheet);
     const rows = await ambilSemuaData(namaSheet);
-    const pengeluaran = rows.filter(r => r[5] === "Pengeluaran");
+    const pengeluaran = rows.filter(r => r[6] === "Pengeluaran");
 
     if (pengeluaran.length === 0) {
       return bot.sendMessage(chatId, `📊 Belum ada pengeluaran di ${namaSheet} ini.`);
@@ -551,7 +597,7 @@ async function handleGrafikKategori(chatId) {
     const kategori = {};
     for (const r of pengeluaran) {
       const kat = r[4] || "Lainnya";
-      kategori[kat] = (kategori[kat] || 0) + parseJumlah(r[6]);
+      kategori[kat] = (kategori[kat] || 0) + parseJumlah(r[7]);
     }
 
     const labels = Object.keys(kategori);
@@ -589,7 +635,7 @@ async function handleGrafikMingguan(chatId) {
   try {
     await pastikanSheetAda(namaSheet);
     const rows = await ambilSemuaData(namaSheet);
-    const data = rows.filter(r => r[5] === "Pemasukan" || r[5] === "Pengeluaran");
+    const data = rows.filter(r => r[6] === "Pemasukan" || r[6] === "Pengeluaran");
 
     if (data.length === 0) {
       return bot.sendMessage(chatId, `📊 Belum ada transaksi di ${namaSheet} ini.`);
@@ -602,8 +648,8 @@ async function handleGrafikMingguan(chatId) {
 
     for (const r of data) {
       const tgl = parseInt(r[0].split("/")[0]);
-      const jumlah = parseJumlah(r[6]);
-      const tipe = r[5];
+      const jumlah = parseJumlah(r[7]);
+      const tipe = r[6];
       let mgg;
       if (tgl <= 7) mgg = "Minggu 1";
       else if (tgl <= 14) mgg = "Minggu 2";
@@ -671,11 +717,32 @@ bot.on("message", async (msg) => {
       return bot.sendMessage(chatId, parsed.balasan);
     }
 
-    // Hitung tanggal yang tepat
     const tanggal = hitungTanggal(parsed.tanggal);
     const namaSheet = getNamaSheet(tanggal);
 
-    await simpanKeSheets(parsed, tanggal);
+    // Kalau pengeluaran → tanya label dulu
+    if (parsed.tipe === "pengeluaran") {
+      labelPending[chatId] = { parsed, tanggal, namaSheet };
+
+      const labelAI = parsed.label || "Kebutuhan";
+      const pesan =
+        `💸 *${parsed.emoji} ${parsed.deskripsi}*\n` +
+        `📁 ${parsed.kategori} • 👛 ${parsed.dompet || "Cash"} • 💵 ${formatRupiah(parsed.jumlah)}\n\n` +
+        `AI menebak ini *${labelAI}* — betul?`;
+
+      return bot.sendMessage(chatId, pesan, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "✅ Kebutuhan", callback_data: "label_kebutuhan" },
+            { text: "🛍️ Keinginan", callback_data: "label_keinginan" }
+          ]]
+        }
+      });
+    }
+
+    // Langsung simpan untuk tipe lain
+    await simpanKeSheets(parsed, tanggal, parsed.label);
 
     let balasan;
     if (parsed.tipe === "transfer") {
@@ -686,13 +753,27 @@ bot.on("message", async (msg) => {
         `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n` +
         `📅 Dicatat ke: ${namaSheet}\n\n` +
         `_${parsed.balasan}_`;
-    } else {
-      const tipeIcon = parsed.tipe === "pemasukan" ? "💰" : "💸";
+    } else if (parsed.tipe === "tabungan") {
       balasan =
-        `${tipeIcon} *Tercatat!*\n\n` +
+        `🏦 *Tabungan Tercatat!*\n\n` +
+        `${parsed.emoji} ${parsed.deskripsi}\n` +
+        `👛 Dompet: ${parsed.dompet || "Cash"}\n` +
+        `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n` +
+        `📅 Dicatat ke: ${namaSheet}\n\n` +
+        `_${parsed.balasan}_`;
+    } else if (parsed.tipe === "investasi") {
+      balasan =
+        `📈 *Investasi Tercatat!*\n\n` +
+        `${parsed.emoji} ${parsed.deskripsi}\n` +
+        `👛 Dompet: ${parsed.dompet || "Cash"}\n` +
+        `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n` +
+        `📅 Dicatat ke: ${namaSheet}\n\n` +
+        `_${parsed.balasan}_`;
+    } else {
+      balasan =
+        `💰 *Pemasukan Tercatat!*\n\n` +
         `${parsed.emoji} ${parsed.deskripsi}\n` +
         `📁 Kategori: ${parsed.kategori}\n` +
-        `📊 Tipe: ${parsed.tipe.charAt(0).toUpperCase() + parsed.tipe.slice(1)}\n` +
         `👛 Dompet: ${parsed.dompet || "Cash"}\n` +
         `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n` +
         `📅 Dicatat ke: ${namaSheet}\n\n` +
@@ -706,4 +787,4 @@ bot.on("message", async (msg) => {
   }
 });
 
-console.log("🤖 Bot Receh aktif — sheet per bulan & input tanggal fleksibel!");
+console.log("🤖 Bot Receh aktif — dengan sistem label Kebutuhan/Keinginan/Tabungan/Investasi!");
