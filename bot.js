@@ -341,9 +341,36 @@ async function handleSaldo(chatId) {
   }
 }
 
-async function handleLaporan(chatId) {
+async function handleLaporan(chatId, bulanInput) {
   bot.sendChatAction(chatId, "typing");
-  const namaSheet = getNamaSheet(new Date());
+
+  // Tentukan sheet yang dituju
+  let namaSheet;
+  if (!bulanInput) {
+    // Tidak ada input → bulan ini
+    namaSheet = getNamaSheet(new Date());
+  } else {
+    // Parse input bulan
+    const bulanMap = {
+      januari: 0, februari: 1, maret: 2, april: 3, mei: 4, juni: 5,
+      juli: 6, agustus: 7, september: 8, oktober: 9, november: 10, desember: 11
+    };
+
+    const input = bulanInput.toLowerCase().trim();
+    const parts = input.split(" ");
+    const namaBulan = parts[0];
+    const tahun = parts[1] ? parseInt(parts[1]) : new Date().getFullYear();
+    const bulanIndex = bulanMap[namaBulan];
+
+    if (bulanIndex === undefined) {
+      return bot.sendMessage(chatId,
+        `❌ Format bulan tidak dikenali.\n\nContoh yang benar:\n/laporan juli\n/laporan juni 2026`
+      );
+    }
+
+    const tglBulan = new Date(tahun, bulanIndex, 1);
+    namaSheet = getNamaSheet(tglBulan);
+  }
 
   try {
     await pastikanSheetAda(namaSheet);
@@ -359,11 +386,13 @@ async function handleLaporan(chatId) {
     const totalTabungan = tabungan.reduce((a, r) => a + parseJumlah(r[7]), 0);
     const totalInvestasi = investasi.reduce((a, r) => a + parseJumlah(r[7]), 0);
 
-    // Hitung per label
-    const totalKebutuhan = pengeluaran.filter(r => r[5] === "Kebutuhan").reduce((a, r) => a + parseJumlah(r[7]), 0);
-    const totalKeinginan = pengeluaran.filter(r => r[5] === "Keinginan").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const totalKebutuhan = pengeluaran
+      .filter(r => r[5] === "Kebutuhan")
+      .reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const totalKeinginan = pengeluaran
+      .filter(r => r[5] === "Keinginan")
+      .reduce((a, r) => a + parseJumlah(r[7]), 0);
 
-    // Hitung per kategori
     const kategoriKeluar = {};
     for (const r of pengeluaran) {
       const kat = `${r[4]} (${r[5] || "-"})`;
@@ -383,6 +412,10 @@ async function handleLaporan(chatId) {
     const pKebutuhan = totalMasuk > 0 ? Math.round(totalKebutuhan / totalMasuk * 100) : 0;
     const pKeinginan = totalMasuk > 0 ? Math.round(totalKeinginan / totalMasuk * 100) : 0;
     const pTabungan = totalMasuk > 0 ? Math.round((totalTabungan + totalInvestasi) / totalMasuk * 100) : 0;
+
+    if (totalMasuk === 0 && totalKeluar === 0 && totalTabungan === 0 && totalInvestasi === 0) {
+      return bot.sendMessage(chatId, `📊 Belum ada transaksi di *${namaSheet}*.`, { parse_mode: "Markdown" });
+    }
 
     const pesan =
       `📊 *Laporan ${namaSheet}*\n\n` +
@@ -700,7 +733,10 @@ bot.on("message", async (msg) => {
 
   if (teks === "/start" || teks === "/help") return handleStart(chatId);
   if (teks === "/saldo") return handleSaldo(chatId);
-  if (teks === "/laporan") return handleLaporan(chatId);
+  if (teks === "/laporan" || teks.startsWith("/laporan ")) {
+    const bulanInput = teks === "/laporan" ? null : teks.replace("/laporan ", "").trim();
+    return handleLaporan(chatId, bulanInput);
+  }
   if (teks === "/riwayat") return handleRiwayat(chatId);
   if (teks === "/grafik") return handleGrafikKategori(chatId);
   if (teks === "/grafikmingguan") return handleGrafikMingguan(chatId);
