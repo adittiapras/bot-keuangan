@@ -95,7 +95,6 @@ async function tanyaAI(teks) {
 
 function hitungTanggal(tanggalStr) {
   const sekarang = new Date();
-
   if (!tanggalStr) return sekarang;
 
   if (tanggalStr === "kemarin") {
@@ -106,9 +105,9 @@ function hitungTanggal(tanggalStr) {
 
   const hariLaluMatch = tanggalStr.match(/(\d+)\s*hari\s*lalu/i);
   if (hariLaluMatch) {
-    const xHariLalu = new Date(sekarang);
-    xHariLalu.setDate(xHariLalu.getDate() - parseInt(hariLaluMatch[1]));
-    return xHariLalu;
+    const x = new Date(sekarang);
+    x.setDate(x.getDate() - parseInt(hariLaluMatch[1]));
+    return x;
   }
 
   const formatMatch = tanggalStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
@@ -183,24 +182,16 @@ function isTransfer(r) {
 }
 
 async function pastikanSheetAda(namaSheet) {
-  const spreadsheet = await sheets.spreadsheets.get({
-    spreadsheetId: SPREADSHEET_ID
-  });
-
-  const sheetSudahAda = spreadsheet.data.sheets.some(
-    s => s.properties.title === namaSheet
-  );
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const sheetSudahAda = spreadsheet.data.sheets.some(s => s.properties.title === namaSheet);
 
   if (!sheetSudahAda) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId: SPREADSHEET_ID,
       requestBody: {
-        requests: [{
-          addSheet: { properties: { title: namaSheet } }
-        }]
+        requests: [{ addSheet: { properties: { title: namaSheet } } }]
       }
     });
-
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
       range: `'${namaSheet}'!A1:J1`,
@@ -209,7 +200,6 @@ async function pastikanSheetAda(namaSheet) {
         values: [["Tanggal", "Jam", "Hari", "Deskripsi", "Kategori", "Label", "Tipe", "Jumlah", "Dompet", "Transfer ID"]]
       }
     });
-
     console.log(`Sheet baru dibuat: ${namaSheet}`);
   }
 }
@@ -259,9 +249,12 @@ async function simpanKeSheets(data, tanggal, labelOverride) {
   return namaSheet;
 }
 
-// Simpan transaksi pending untuk konfirmasi label
+// ============================================================
+// PENDING STATE
+// ============================================================
 const labelPending = {};
 const hapusPending = {};
+const rekapPending = {};
 
 // ============================================================
 // COMMAND HANDLERS
@@ -281,10 +274,11 @@ async function handleStart(chatId) {
     `📊 *Command tersedia:*\n` +
     `/saldo — cek saldo & ringkasan hari ini\n` +
     `/laporan — laporan lengkap bulan ini\n` +
+    `/laporan juni — laporan bulan tertentu\n` +
     `/riwayat — lihat 10 transaksi terakhir\n` +
-    `/rekap — rekap bulan lalu & pindahkan sisa saldo\n` +
     `/grafik — pie chart pengeluaran per kategori\n` +
     `/grafikmingguan — bar chart pemasukan vs pengeluaran\n` +
+    `/rekap — rekap bulan lalu & pindahkan sisa saldo\n` +
     `/hapus — batalkan transaksi terakhir\n` +
     `/help — tampilkan pesan ini lagi`;
   bot.sendMessage(chatId, pesan, { parse_mode: "Markdown" });
@@ -345,18 +339,14 @@ async function handleSaldo(chatId) {
 async function handleLaporan(chatId, bulanInput) {
   bot.sendChatAction(chatId, "typing");
 
-  // Tentukan sheet yang dituju
   let namaSheet;
   if (!bulanInput) {
-    // Tidak ada input → bulan ini
     namaSheet = getNamaSheet(new Date());
   } else {
-    // Parse input bulan
     const bulanMap = {
       januari: 0, februari: 1, maret: 2, april: 3, mei: 4, juni: 5,
       juli: 6, agustus: 7, september: 8, oktober: 9, november: 10, desember: 11
     };
-
     const input = bulanInput.toLowerCase().trim();
     const parts = input.split(" ");
     const namaBulan = parts[0];
@@ -369,8 +359,7 @@ async function handleLaporan(chatId, bulanInput) {
       );
     }
 
-    const tglBulan = new Date(tahun, bulanIndex, 1);
-    namaSheet = getNamaSheet(tglBulan);
+    namaSheet = getNamaSheet(new Date(tahun, bulanIndex, 1));
   }
 
   try {
@@ -387,12 +376,8 @@ async function handleLaporan(chatId, bulanInput) {
     const totalTabungan = tabungan.reduce((a, r) => a + parseJumlah(r[7]), 0);
     const totalInvestasi = investasi.reduce((a, r) => a + parseJumlah(r[7]), 0);
 
-    const totalKebutuhan = pengeluaran
-      .filter(r => r[5] === "Kebutuhan")
-      .reduce((a, r) => a + parseJumlah(r[7]), 0);
-    const totalKeinginan = pengeluaran
-      .filter(r => r[5] === "Keinginan")
-      .reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const totalKebutuhan = pengeluaran.filter(r => r[5] === "Kebutuhan").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const totalKeinginan = pengeluaran.filter(r => r[5] === "Keinginan").reduce((a, r) => a + parseJumlah(r[7]), 0);
 
     const kategoriKeluar = {};
     for (const r of pengeluaran) {
@@ -529,118 +514,53 @@ async function handleHapus(chatId) {
   }
 }
 
-bot.on("callback_query", async (query) => {
-  const chatId = query.message.chat.id;
-  const messageId = query.message.message_id;
-  const data = query.data;
+async function handleRekap(chatId) {
+  bot.sendChatAction(chatId, "typing");
 
-  // Handle konfirmasi label
-  if (data === "label_kebutuhan" || data === "label_keinginan") {
-    const pending = labelPending[chatId];
-    if (!pending) {
-      bot.answerCallbackQuery(query.id);
-      return bot.editMessageText("⚠️ Sesi sudah kedaluwarsa, coba input ulang transaksinya.", {
-        chat_id: chatId, message_id: messageId
-      });
-    }
+  const sekarang = new Date();
+  const bulanLalu = new Date(sekarang.getFullYear(), sekarang.getMonth() - 1, 1);
+  const namaSheetLalu = getNamaSheet(bulanLalu);
 
-    const label = data === "label_kebutuhan" ? "Kebutuhan" : "Keinginan";
-    const { parsed, tanggal, namaSheet } = pending;
+  try {
+    await pastikanSheetAda(namaSheetLalu);
+    const rows = await ambilSemuaData(namaSheetLalu);
 
-    await simpanKeSheets(parsed, tanggal, label);
-    delete labelPending[chatId];
+    const pemasukan = rows.filter(r => r[6] === "Pemasukan").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const pengeluaran = rows.filter(r => r[6] === "Pengeluaran").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const tabungan = rows.filter(r => r[6] === "Tabungan").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const investasi = rows.filter(r => r[6] === "Investasi").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const sisaSaldo = pemasukan - pengeluaran - tabungan - investasi;
 
-    bot.answerCallbackQuery(query.id);
-    bot.editMessageText(
-      `💸 *Tercatat sebagai ${label}!*\n\n` +
-      `${parsed.emoji} ${parsed.deskripsi}\n` +
-      `📁 Kategori: ${parsed.kategori}\n` +
-      `🏷️ Label: ${label}\n` +
-      `👛 Dompet: ${parsed.dompet || "Cash"}\n` +
-      `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n` +
-      `📅 Dicatat ke: ${namaSheet}\n\n` +
-      `_${parsed.balasan}_`,
-      { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
-    );
-    return;
-  }
+    rekapPending[chatId] = {
+      namaSheet: namaSheetLalu,
+      sisaSaldo,
+      bulan: namaSheetLalu,
+      waitingRekening: false
+    };
 
-  // Handle konfirmasi hapus
-  if (data === "hapus_ya") {
-    const pending = hapusPending[chatId];
+    const pesan =
+      `📋 *Rekap ${namaSheetLalu}*\n\n` +
+      `⬆️ Pemasukan: ${formatRupiah(pemasukan)}\n` +
+      `⬇️ Pengeluaran: ${formatRupiah(pengeluaran)}\n` +
+      `🏦 Tabungan: ${formatRupiah(tabungan)}\n` +
+      `📈 Investasi: ${formatRupiah(investasi)}\n` +
+      `💰 Sisa Saldo: ${formatRupiah(sisaSaldo)}\n\n` +
+      `Mau pindahkan sisa saldo *${formatRupiah(sisaSaldo)}* ke tabungan utama?`;
 
-    if (!pending) {
-      bot.answerCallbackQuery(query.id);
-      return bot.editMessageText("⚠️ Sesi hapus sudah kedaluwarsa, coba /hapus lagi.", {
-        chat_id: chatId, message_id: messageId
-      });
-    }
-
-    const { lastRowIndex, namaSheet } = pending;
-    const rows = await ambilSemuaData(namaSheet);
-    const lastRow = rows[lastRowIndex];
-
-    let indexToDelete = [lastRowIndex];
-    if (isTransfer(lastRow) && lastRow[9]) {
-      const transferId = lastRow[9];
-      rows.forEach((r, i) => {
-        if (i !== lastRowIndex && r[9] === transferId) indexToDelete.push(i);
-      });
-    }
-
-    indexToDelete.sort((a, b) => b - a);
-    for (const idx of indexToDelete) {
-      await sheets.spreadsheets.values.clear({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `'${namaSheet}'!A${idx + 1}:J${idx + 1}`,
-      });
-    }
-
-    delete hapusPending[chatId];
-    bot.answerCallbackQuery(query.id);
-    bot.editMessageText(
-      `✅ *Transaksi berhasil dihapus!*\n\n` +
-      `📝 ${lastRow[3]}\n` +
-      `💵 ${formatRupiah(parseJumlah(lastRow[7]))}` +
-      (indexToDelete.length > 1 ? `\n_Baris pasangan transfer ikut dihapus_` : ""),
-      { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
-    );
-
-  } else if (data === "hapus_tidak") {
-    delete hapusPending[chatId];
-    bot.answerCallbackQuery(query.id);
-    bot.editMessageText("👍 Oke, transaksi tidak jadi dihapus.", {
-      chat_id: chatId, message_id: messageId
+    bot.sendMessage(chatId, pesan, {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "✅ Ya, pindahkan", callback_data: "rekap_ya" },
+          { text: "❌ Tidak", callback_data: "rekap_tidak" }
+        ]]
+      }
     });
+  } catch (err) {
+    console.error("Error handleRekap:", err.message);
+    bot.sendMessage(chatId, "Maaf, ada kendala teknis. Coba lagi ya! 🙏");
   }
-});
-
-} else if (data === "rekap_ya") {
-    const pending = rekapPending[chatId];
-    if (!pending) {
-      bot.answerCallbackQuery(query.id);
-      return bot.editMessageText("⚠️ Sesi rekap sudah kedaluwarsa, coba /rekap lagi.", {
-        chat_id: chatId, message_id: messageId
-      });
-    }
-
-    // Tanya rekening tujuan
-    bot.answerCallbackQuery(query.id);
-    bot.editMessageText(
-      `💰 Sisa saldo *${formatRupiah(pending.sisaSaldo)}* akan dipindah ke tabungan utama.\n\nKetik nama rekening tujuan:`,
-      { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
-    );
-
-    // Set state tunggu input rekening
-    rekapPending[chatId].waitingRekening = true;
-
-  } else if (data === "rekap_tidak") {
-    delete rekapPending[chatId];
-    bot.answerCallbackQuery(query.id);
-    bot.editMessageText("👍 Oke, sisa saldo tidak dipindahkan.", {
-      chat_id: chatId, message_id: messageId
-    });
-  }
+}
 
 async function handleGrafikKategori(chatId) {
   bot.sendChatAction(chatId, "upload_photo");
@@ -749,59 +669,128 @@ async function handleGrafikMingguan(chatId) {
   }
 }
 
-const rekapPending = {};
+// ============================================================
+// CALLBACK QUERY HANDLER
+// ============================================================
 
-async function handleRekap(chatId) {
-  bot.sendChatAction(chatId, "typing");
+bot.on("callback_query", async (query) => {
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+  const data = query.data;
 
-  // Ambil data bulan lalu
-  const sekarang = new Date();
-  const bulanLalu = new Date(sekarang.getFullYear(), sekarang.getMonth() - 1, 1);
-  const namaSheetLalu = getNamaSheet(bulanLalu);
+  // ── Label Kebutuhan/Keinginan ──
+  if (data === "label_kebutuhan" || data === "label_keinginan") {
+    const pending = labelPending[chatId];
+    if (!pending) {
+      bot.answerCallbackQuery(query.id);
+      return bot.editMessageText("⚠️ Sesi sudah kedaluwarsa, coba input ulang transaksinya.", {
+        chat_id: chatId, message_id: messageId
+      });
+    }
 
-  try {
-    await pastikanSheetAda(namaSheetLalu);
-    const rows = await ambilSemuaData(namaSheetLalu);
+    const label = data === "label_kebutuhan" ? "Kebutuhan" : "Keinginan";
+    const { parsed, tanggal, namaSheet } = pending;
 
-    const pemasukan = rows.filter(r => r[6] === "Pemasukan").reduce((a, r) => a + parseJumlah(r[7]), 0);
-    const pengeluaran = rows.filter(r => r[6] === "Pengeluaran").reduce((a, r) => a + parseJumlah(r[7]), 0);
-    const tabungan = rows.filter(r => r[6] === "Tabungan").reduce((a, r) => a + parseJumlah(r[7]), 0);
-    const investasi = rows.filter(r => r[6] === "Investasi").reduce((a, r) => a + parseJumlah(r[7]), 0);
-    const sisaSaldo = pemasukan - pengeluaran - tabungan - investasi;
+    await simpanKeSheets(parsed, tanggal, label);
+    delete labelPending[chatId];
 
-    // Simpan pending untuk konfirmasi
-    rekapPending[chatId] = {
-      namaSheet: namaSheetLalu,
-      sisaSaldo,
-      bulan: namaSheetLalu
-    };
-
-    const pesan =
-      `📋 *Rekap ${namaSheetLalu}*\n\n` +
-      `⬆️ Pemasukan: ${formatRupiah(pemasukan)}\n` +
-      `⬇️ Pengeluaran: ${formatRupiah(pengeluaran)}\n` +
-      `🏦 Tabungan: ${formatRupiah(tabungan)}\n` +
-      `📈 Investasi: ${formatRupiah(investasi)}\n` +
-      `💰 Sisa Saldo: ${formatRupiah(sisaSaldo)}\n\n` +
-      `Mau pindahkan sisa saldo *${formatRupiah(sisaSaldo)}* ke tabungan utama?`;
-
-    bot.sendMessage(chatId, pesan, {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [[
-          { text: "✅ Ya, pindahkan", callback_data: "rekap_ya" },
-          { text: "❌ Tidak", callback_data: "rekap_tidak" }
-        ]]
-      }
-    });
-  } catch (err) {
-    console.error("Error handleRekap:", err.message);
-    bot.sendMessage(chatId, "Maaf, ada kendala teknis. Coba lagi ya! 🙏");
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText(
+      `💸 *Tercatat sebagai ${label}!*\n\n` +
+      `${parsed.emoji} ${parsed.deskripsi}\n` +
+      `📁 Kategori: ${parsed.kategori}\n` +
+      `🏷️ Label: ${label}\n` +
+      `👛 Dompet: ${parsed.dompet || "Cash"}\n` +
+      `💵 Jumlah: ${formatRupiah(parsed.jumlah)}\n` +
+      `📅 Dicatat ke: ${namaSheet}\n\n` +
+      `_${parsed.balasan}_`,
+      { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
+    );
+    return;
   }
-}
+
+  // ── Hapus ──
+  if (data === "hapus_ya") {
+    const pending = hapusPending[chatId];
+    if (!pending) {
+      bot.answerCallbackQuery(query.id);
+      return bot.editMessageText("⚠️ Sesi hapus sudah kedaluwarsa, coba /hapus lagi.", {
+        chat_id: chatId, message_id: messageId
+      });
+    }
+
+    const { lastRowIndex, namaSheet } = pending;
+    const rows = await ambilSemuaData(namaSheet);
+    const lastRow = rows[lastRowIndex];
+
+    let indexToDelete = [lastRowIndex];
+    if (isTransfer(lastRow) && lastRow[9]) {
+      const transferId = lastRow[9];
+      rows.forEach((r, i) => {
+        if (i !== lastRowIndex && r[9] === transferId) indexToDelete.push(i);
+      });
+    }
+
+    indexToDelete.sort((a, b) => b - a);
+    for (const idx of indexToDelete) {
+      await sheets.spreadsheets.values.clear({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `'${namaSheet}'!A${idx + 1}:J${idx + 1}`,
+      });
+    }
+
+    delete hapusPending[chatId];
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText(
+      `✅ *Transaksi berhasil dihapus!*\n\n` +
+      `📝 ${lastRow[3]}\n` +
+      `💵 ${formatRupiah(parseJumlah(lastRow[7]))}` +
+      (indexToDelete.length > 1 ? `\n_Baris pasangan transfer ikut dihapus_` : ""),
+      { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
+    );
+    return;
+  }
+
+  if (data === "hapus_tidak") {
+    delete hapusPending[chatId];
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText("👍 Oke, transaksi tidak jadi dihapus.", {
+      chat_id: chatId, message_id: messageId
+    });
+    return;
+  }
+
+  // ── Rekap ──
+  if (data === "rekap_ya") {
+    const pending = rekapPending[chatId];
+    if (!pending) {
+      bot.answerCallbackQuery(query.id);
+      return bot.editMessageText("⚠️ Sesi rekap sudah kedaluwarsa, coba /rekap lagi.", {
+        chat_id: chatId, message_id: messageId
+      });
+    }
+
+    rekapPending[chatId].waitingRekening = true;
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText(
+      `💰 Sisa saldo *${formatRupiah(pending.sisaSaldo)}* akan dipindah ke tabungan utama.\n\nKetik nama rekening tujuan:`,
+      { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
+    );
+    return;
+  }
+
+  if (data === "rekap_tidak") {
+    delete rekapPending[chatId];
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText("👍 Oke, sisa saldo tidak dipindahkan.", {
+      chat_id: chatId, message_id: messageId
+    });
+    return;
+  }
+});
 
 // ============================================================
-// MAIN
+// MAIN MESSAGE HANDLER
 // ============================================================
 
 bot.on("message", async (msg) => {
@@ -810,28 +799,15 @@ bot.on("message", async (msg) => {
 
   if (!teks) return;
 
-  if (teks === "/start" || teks === "/help") return handleStart(chatId);
-  if (teks === "/saldo") return handleSaldo(chatId);
-  if (teks === "/laporan" || teks.startsWith("/laporan ")) {
-    const bulanInput = teks === "/laporan" ? null : teks.replace("/laporan ", "").trim();
-    return handleLaporan(chatId, bulanInput);
-  }
-  if (teks === "/riwayat") return handleRiwayat(chatId);
-  if (teks === "/grafik") return handleGrafikKategori(chatId);
-  if (teks === "/grafikmingguan") return handleGrafikMingguan(chatId);
-  if (teks === "/hapus") return handleHapus(chatId);
-  if (teks === "/rekap") return handleRekap(chatId);
-
-  // Handle input rekening untuk rekap
+  // Handle input rekening untuk rekap rollover
   if (rekapPending[chatId]?.waitingRekening) {
     const pending = rekapPending[chatId];
     const rekening = teks.trim();
-    
+
     try {
-      // Catat sebagai Rollover di sheet bulan lalu
       const tanggal = new Date();
       const { tanggal: tgl, jam, hari } = getTanggalParts(tanggal);
-      
+
       await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
         range: `'${pending.namaSheet}'!A:J`,
@@ -849,9 +825,9 @@ bot.on("message", async (msg) => {
           ]]
         }
       });
-  
+
       delete rekapPending[chatId];
-  
+
       bot.sendMessage(chatId,
         `✅ *Sisa saldo berhasil dipindahkan!*\n\n` +
         `💰 ${formatRupiah(pending.sisaSaldo)}\n` +
@@ -867,6 +843,19 @@ bot.on("message", async (msg) => {
     return;
   }
 
+  // Routing commands
+  if (teks === "/start" || teks === "/help") return handleStart(chatId);
+  if (teks === "/saldo") return handleSaldo(chatId);
+  if (teks === "/laporan" || teks.startsWith("/laporan ")) {
+    const bulanInput = teks === "/laporan" ? null : teks.replace("/laporan ", "").trim();
+    return handleLaporan(chatId, bulanInput);
+  }
+  if (teks === "/riwayat") return handleRiwayat(chatId);
+  if (teks === "/grafik") return handleGrafikKategori(chatId);
+  if (teks === "/grafikmingguan") return handleGrafikMingguan(chatId);
+  if (teks === "/rekap") return handleRekap(chatId);
+  if (teks === "/hapus") return handleHapus(chatId);
+
   bot.sendChatAction(chatId, "typing");
 
   try {
@@ -881,7 +870,7 @@ bot.on("message", async (msg) => {
     const tanggal = hitungTanggal(parsed.tanggal);
     const namaSheet = getNamaSheet(tanggal);
 
-    // Kalau pengeluaran → tanya label dulu
+    // Pengeluaran → tanya label dulu
     if (parsed.tipe === "pengeluaran") {
       labelPending[chatId] = { parsed, tanggal, namaSheet };
 
@@ -948,4 +937,4 @@ bot.on("message", async (msg) => {
   }
 });
 
-console.log("🤖 Bot Receh aktif — dengan sistem label Kebutuhan/Keinginan/Tabungan/Investasi!");
+console.log("🤖 Bot Receh aktif!");
