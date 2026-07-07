@@ -282,6 +282,7 @@ async function handleStart(chatId) {
     `/saldo — cek saldo & ringkasan hari ini\n` +
     `/laporan — laporan lengkap bulan ini\n` +
     `/riwayat — lihat 10 transaksi terakhir\n` +
+    `/rekap — rekap bulan lalu & pindahkan sisa saldo\n` +
     `/grafik — pie chart pengeluaran per kategori\n` +
     `/grafikmingguan — bar chart pemasukan vs pengeluaran\n` +
     `/hapus — batalkan transaksi terakhir\n` +
@@ -614,6 +615,33 @@ bot.on("callback_query", async (query) => {
   }
 });
 
+} else if (data === "rekap_ya") {
+    const pending = rekapPending[chatId];
+    if (!pending) {
+      bot.answerCallbackQuery(query.id);
+      return bot.editMessageText("⚠️ Sesi rekap sudah kedaluwarsa, coba /rekap lagi.", {
+        chat_id: chatId, message_id: messageId
+      });
+    }
+
+    // Tanya rekening tujuan
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText(
+      `💰 Sisa saldo *${formatRupiah(pending.sisaSaldo)}* akan dipindah ke tabungan utama.\n\nKetik nama rekening tujuan:`,
+      { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" }
+    );
+
+    // Set state tunggu input rekening
+    rekapPending[chatId].waitingRekening = true;
+
+  } else if (data === "rekap_tidak") {
+    delete rekapPending[chatId];
+    bot.answerCallbackQuery(query.id);
+    bot.editMessageText("👍 Oke, sisa saldo tidak dipindahkan.", {
+      chat_id: chatId, message_id: messageId
+    });
+  }
+
 async function handleGrafikKategori(chatId) {
   bot.sendChatAction(chatId, "upload_photo");
   const namaSheet = getNamaSheet(new Date());
@@ -721,6 +749,57 @@ async function handleGrafikMingguan(chatId) {
   }
 }
 
+const rekapPending = {};
+
+async function handleRekap(chatId) {
+  bot.sendChatAction(chatId, "typing");
+
+  // Ambil data bulan lalu
+  const sekarang = new Date();
+  const bulanLalu = new Date(sekarang.getFullYear(), sekarang.getMonth() - 1, 1);
+  const namaSheetLalu = getNamaSheet(bulanLalu);
+
+  try {
+    await pastikanSheetAda(namaSheetLalu);
+    const rows = await ambilSemuaData(namaSheetLalu);
+
+    const pemasukan = rows.filter(r => r[6] === "Pemasukan").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const pengeluaran = rows.filter(r => r[6] === "Pengeluaran").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const tabungan = rows.filter(r => r[6] === "Tabungan").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const investasi = rows.filter(r => r[6] === "Investasi").reduce((a, r) => a + parseJumlah(r[7]), 0);
+    const sisaSaldo = pemasukan - pengeluaran - tabungan - investasi;
+
+    // Simpan pending untuk konfirmasi
+    rekapPending[chatId] = {
+      namaSheet: namaSheetLalu,
+      sisaSaldo,
+      bulan: namaSheetLalu
+    };
+
+    const pesan =
+      `📋 *Rekap ${namaSheetLalu}*\n\n` +
+      `⬆️ Pemasukan: ${formatRupiah(pemasukan)}\n` +
+      `⬇️ Pengeluaran: ${formatRupiah(pengeluaran)}\n` +
+      `🏦 Tabungan: ${formatRupiah(tabungan)}\n` +
+      `📈 Investasi: ${formatRupiah(investasi)}\n` +
+      `💰 Sisa Saldo: ${formatRupiah(sisaSaldo)}\n\n` +
+      `Mau pindahkan sisa saldo *${formatRupiah(sisaSaldo)}* ke tabungan utama?`;
+
+    bot.sendMessage(chatId, pesan, {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "✅ Ya, pindahkan", callback_data: "rekap_ya" },
+          { text: "❌ Tidak", callback_data: "rekap_tidak" }
+        ]]
+      }
+    });
+  } catch (err) {
+    console.error("Error handleRekap:", err.message);
+    bot.sendMessage(chatId, "Maaf, ada kendala teknis. Coba lagi ya! 🙏");
+  }
+}
+
 // ============================================================
 // MAIN
 // ============================================================
@@ -741,6 +820,52 @@ bot.on("message", async (msg) => {
   if (teks === "/grafik") return handleGrafikKategori(chatId);
   if (teks === "/grafikmingguan") return handleGrafikMingguan(chatId);
   if (teks === "/hapus") return handleHapus(chatId);
+  if (teks === "/rekap") return handleRekap(chatId);
+
+  // Handle input rekening untuk rekap
+  if (rekapPending[chatId]?.waitingRekening) {
+    const pending = rekapPending[chatId];
+    const rekening = teks.trim();
+    
+    try {
+      // Catat sebagai Rollover di sheet bulan lalu
+      const tanggal = new Date();
+      const { tanggal: tgl, jam, hari } = getTanggalParts(tanggal);
+      
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `'${pending.namaSheet}'!A:J`,
+        valueInputOption: "RAW",
+        requestBody: {
+          values: [[
+            tgl, jam, hari,
+            `Rollover ke ${rekening}`,
+            "Rollover",
+            "Rollover",
+            "Rollover",
+            pending.sisaSaldo,
+            rekening,
+            ""
+          ]]
+        }
+      });
+  
+      delete rekapPending[chatId];
+  
+      bot.sendMessage(chatId,
+        `✅ *Sisa saldo berhasil dipindahkan!*\n\n` +
+        `💰 ${formatRupiah(pending.sisaSaldo)}\n` +
+        `🏦 Rekening: ${rekening}\n` +
+        `📅 Dari: ${pending.bulan}\n\n` +
+        `_Data sudah masuk ke Sheet Tabungan._`,
+        { parse_mode: "Markdown" }
+      );
+    } catch (err) {
+      console.error("Error rekap rollover:", err.message);
+      bot.sendMessage(chatId, "Maaf, ada kendala teknis. Coba lagi ya! 🙏");
+    }
+    return;
+  }
 
   bot.sendChatAction(chatId, "typing");
 
