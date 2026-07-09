@@ -514,16 +514,40 @@ async function handleHapus(chatId) {
   }
 }
 
-async function handleRekap(chatId) {
+async function handleRekap(chatId, bulanInput) {
   bot.sendChatAction(chatId, "typing");
 
-  const sekarang = new Date();
-  const bulanLalu = new Date(sekarang.getFullYear(), sekarang.getMonth() - 1, 1);
-  const namaSheetLalu = getNamaSheet(bulanLalu);
+  let namaSheetTarget;
+
+  if (!bulanInput) {
+    // Default → bulan lalu
+    const sekarang = new Date();
+    const bulanLalu = new Date(sekarang.getFullYear(), sekarang.getMonth() - 1, 1);
+    namaSheetTarget = getNamaSheet(bulanLalu);
+  } else {
+    // Parse input bulan
+    const bulanMap = {
+      januari: 0, februari: 1, maret: 2, april: 3, mei: 4, juni: 5,
+      juli: 6, agustus: 7, september: 8, oktober: 9, november: 10, desember: 11
+    };
+    const input = bulanInput.toLowerCase().trim();
+    const parts = input.split(" ");
+    const namaBulan = parts[0];
+    const tahun = parts[1] ? parseInt(parts[1]) : new Date().getFullYear();
+    const bulanIndex = bulanMap[namaBulan];
+
+    if (bulanIndex === undefined) {
+      return bot.sendMessage(chatId,
+        `❌ Format bulan tidak dikenali.\n\nContoh yang benar:\n/rekap → rekap bulan lalu\n/rekap juli → rekap Juli\n/rekap juni 2026 → rekap bulan spesifik`
+      );
+    }
+
+    namaSheetTarget = getNamaSheet(new Date(tahun, bulanIndex, 1));
+  }
 
   try {
-    await pastikanSheetAda(namaSheetLalu);
-    const rows = await ambilSemuaData(namaSheetLalu);
+    await pastikanSheetAda(namaSheetTarget);
+    const rows = await ambilSemuaData(namaSheetTarget);
 
     const pemasukan = rows.filter(r => r[6] === "Pemasukan").reduce((a, r) => a + parseJumlah(r[7]), 0);
     const pengeluaran = rows.filter(r => r[6] === "Pengeluaran").reduce((a, r) => a + parseJumlah(r[7]), 0);
@@ -532,14 +556,14 @@ async function handleRekap(chatId) {
     const sisaSaldo = pemasukan - pengeluaran - tabungan - investasi;
 
     rekapPending[chatId] = {
-      namaSheet: namaSheetLalu,
+      namaSheet: namaSheetTarget,
       sisaSaldo,
-      bulan: namaSheetLalu,
+      bulan: namaSheetTarget,
       waitingRekening: false
     };
 
     const pesan =
-      `📋 *Rekap ${namaSheetLalu}*\n\n` +
+      `📋 *Rekap ${namaSheetTarget}*\n\n` +
       `⬆️ Pemasukan: ${formatRupiah(pemasukan)}\n` +
       `⬇️ Pengeluaran: ${formatRupiah(pengeluaran)}\n` +
       `🏦 Tabungan: ${formatRupiah(tabungan)}\n` +
@@ -853,7 +877,10 @@ bot.on("message", async (msg) => {
   if (teks === "/riwayat") return handleRiwayat(chatId);
   if (teks === "/grafik") return handleGrafikKategori(chatId);
   if (teks === "/grafikmingguan") return handleGrafikMingguan(chatId);
-  if (teks === "/rekap") return handleRekap(chatId);
+  if (teks === "/rekap" || teks.startsWith("/rekap ")) {
+    const bulanInput = teks === "/rekap" ? null : teks.replace("/rekap ", "").trim();
+    return handleRekap(chatId, bulanInput);
+  }
   if (teks === "/hapus") return handleHapus(chatId);
 
   bot.sendChatAction(chatId, "typing");
