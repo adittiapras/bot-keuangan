@@ -1,12 +1,14 @@
 {
   "name": "bot-keuangan-telegram",
-  "version": "3.0.0",
-  "description": "Bot Telegram pencatat keuangan otomatis - 100% Gratis",
+  "version": "4.0.0",
+  "description": "Bot Receh - 100% Gratis",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.15.0",
+    "express": "^4.18.0",
     "googleapis": "^140.0.0",
     "node-telegram-bot-api": "^0.66.0"
   },
