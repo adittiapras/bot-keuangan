@@ -9,7 +9,33 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 // ============================================================
 
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+const bot = new TelegramBot(TELEGRAM_TOKEN, { webHook: true });
+
+const express = require("express");
+const app = express();
+app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
+const RENDER_URL = process.env.RENDER_URL;
+
+// Endpoint untuk UptimeRobot ping
+app.get("/", (req, res) => {
+  res.send("Bot Receh aktif! 🤖");
+});
+
+// Endpoint webhook Telegram
+app.post(`/webhook/${TELEGRAM_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+app.listen(PORT, async () => {
+  console.log(`Server jalan di port ${PORT}`);
+  // Set webhook ke Telegram
+  const webhookUrl = `${RENDER_URL}/webhook/${TELEGRAM_TOKEN}`;
+  await bot.setWebHook(webhookUrl);
+  console.log(`Webhook aktif: ${webhookUrl}`);
+});
 
 const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
