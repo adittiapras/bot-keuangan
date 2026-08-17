@@ -102,7 +102,7 @@ async function tanyaAI(teks) {
       { role: "user", content: teks }
     ],
     temperature: 0.1,
-    max_tokens: 300
+    max_tokens: 500
   };
 
   const res = await fetch(url, {
@@ -116,7 +116,14 @@ async function tanyaAI(teks) {
 
   const data = await res.json();
   if (!res.ok) throw new Error(`Groq error ${res.status}: ${JSON.stringify(data)}`);
-  return data.choices[0].message.content;
+  
+  const raw = data.choices[0].message.content;
+  
+  // Bersihkan response — ambil hanya bagian JSON-nya
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Tidak ada JSON valid dalam response AI");
+  
+  return jsonMatch[0];
 }
 
 function hitungTanggal(tanggalStr) {
@@ -913,8 +920,7 @@ bot.on("message", async (msg) => {
 
   try {
     const raw = await tanyaAI(teks);
-    const clean = raw.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(clean);
+    const parsed = JSON.parse(raw);
 
     if (parsed.error) {
       return bot.sendMessage(chatId, parsed.balasan);
