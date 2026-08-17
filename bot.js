@@ -96,7 +96,7 @@ Jika pesan tidak ada hubungannya dengan transaksi keuangan:
 async function tanyaAI(teks) {
   const url = `https://api.groq.com/openai/v1/chat/completions`;
   const body = {
-    model: "llama-3.3-70b-versatile",
+    model: "llama3-70b-8192",
     messages: [
       { role: "system", content: PROMPT_TEMPLATE },
       { role: "user", content: teks }
