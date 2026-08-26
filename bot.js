@@ -102,7 +102,8 @@ async function tanyaAI(teks) {
       { role: "user", content: teks }
     ],
     temperature: 0.1,
-    max_tokens: 500
+    max_tokens: 500,
+    reasoning_effort: "none"  // matikan thinking mode
   };
 
   const res = await fetch(url, {
@@ -119,7 +120,7 @@ async function tanyaAI(teks) {
   
   const raw = data.choices[0].message.content;
   
-  // Bersihkan response — ambil hanya bagian JSON-nya
+  // Ekstrak JSON dari response
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Tidak ada JSON valid dalam response AI");
   
