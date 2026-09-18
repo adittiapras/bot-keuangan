@@ -103,8 +103,28 @@ async function tanyaAI(teks) {
     ],
     temperature: 0.1,
     max_tokens: 500,
-    reasoning_effort: "none"  // matikan thinking mode
+    reasoning_effort: "low"
   };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${GROQ_API_KEY}`
+    },
+    body: JSON.stringify(body)
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(`Groq error ${res.status}: ${JSON.stringify(data)}`);
+  
+  const raw = data.choices[0].message.content;
+  
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Tidak ada JSON valid dalam response AI");
+  
+  return jsonMatch[0];
+}
 
   const res = await fetch(url, {
     method: "POST",
