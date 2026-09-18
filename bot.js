@@ -126,27 +126,6 @@ async function tanyaAI(teks) {
   return jsonMatch[0];
 }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${GROQ_API_KEY}`
-    },
-    body: JSON.stringify(body)
-  });
-
-  const data = await res.json();
-  if (!res.ok) throw new Error(`Groq error ${res.status}: ${JSON.stringify(data)}`);
-  
-  const raw = data.choices[0].message.content;
-  
-  // Ekstrak JSON dari response
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Tidak ada JSON valid dalam response AI");
-  
-  return jsonMatch[0];
-}
-
 function hitungTanggal(tanggalStr) {
   const sekarang = new Date();
   if (!tanggalStr) return sekarang;
